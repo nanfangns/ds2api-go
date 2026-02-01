@@ -253,7 +253,7 @@ WELCOME_HTML = """<!DOCTYPE html>
             <div class="feature-card">
                 <span class="feature-icon">🧠</span>
                 <h3>深度思考</h3>
-                <p>完整支持 DeepSeek-R1 推理过程输出，让思考可见。</p>
+                <p>完整支持 推理过程输出，让思考可见。</p>
             </div>
             <div class="feature-card">
                 <span class="feature-icon">🔍</span>
@@ -263,7 +263,7 @@ WELCOME_HTML = """<!DOCTYPE html>
         </div>
 
         <footer>
-            <p>&copy; 2024 DS2API Project. Designed for flexibility & performance.</p>
+            <p>&copy; 2026 DS2API Project. Designed for flexibility & performance.</p>
         </footer>
     </div>
 </body>
