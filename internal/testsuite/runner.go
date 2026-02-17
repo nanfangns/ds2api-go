@@ -327,6 +327,7 @@ func (r *Runner) runPreflight(ctx context.Context) error {
 		{"go", "test", "./...", "-count=1"},
 		{"node", "--check", "api/chat-stream.js"},
 		{"node", "--check", "api/helpers/stream-tool-sieve.js"},
+		{"node", "--test", "api/helpers/stream-tool-sieve.test.js", "api/chat-stream.test.js"},
 		{"npm", "run", "build", "--prefix", "webui"},
 	}
 	f, err := os.OpenFile(r.preflightLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)

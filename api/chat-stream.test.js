@@ -1,0 +1,128 @@
+'use strict';
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+
+const handler = require('./chat-stream');
+const {
+  createToolSieveState,
+  processToolSieveChunk,
+  flushToolSieve,
+} = require('./helpers/stream-tool-sieve');
+
+const { parseChunkForContent } = handler.__test;
+
+test('chat-stream exposes parser test hooks', () => {
+  assert.equal(typeof parseChunkForContent, 'function');
+});
+
+test('parseChunkForContent keeps split response/content fragments inside response array', () => {
+  const chunk = {
+    p: 'response',
+    v: [
+      { p: 'response/content', v: '{"' },
+      { p: 'response/content', v: 'tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}' },
+    ],
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  assert.equal(parsed.finished, false);
+  assert.equal(parsed.newType, 'text');
+  assert.equal(parsed.parts.length, 2);
+  const combined = parsed.parts.map((p) => p.text).join('');
+  assert.equal(combined, '{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}');
+});
+
+test('parseChunkForContent + sieve does not leak suspicious prefix in split tool json case', () => {
+  const chunk = {
+    p: 'response',
+    v: [
+      { p: 'response/content', v: '{"' },
+      { p: 'response/content', v: 'tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}' },
+    ],
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  const state = createToolSieveState();
+  const events = [];
+  for (const part of parsed.parts) {
+    events.push(...processToolSieveChunk(state, part.text, ['read_file']));
+  }
+  events.push(...flushToolSieve(state, ['read_file']));
+
+  const hasToolCalls = events.some((evt) => evt.type === 'tool_calls' && evt.calls && evt.calls.length > 0);
+  const leakedText = events
+    .filter((evt) => evt.type === 'text' && evt.text)
+    .map((evt) => evt.text)
+    .join('');
+
+  assert.equal(hasToolCalls, true);
+  assert.equal(leakedText.includes('{'), false);
+  assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
+});
+
+test('parseChunkForContent consumes nested item.v array payloads', () => {
+  const chunk = {
+    p: 'response',
+    v: [
+      { p: 'response/content', v: ['A', 'B'] },
+      { p: 'response/content', v: [{ content: 'C', type: 'RESPONSE' }] },
+    ],
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  assert.equal(parsed.finished, false);
+  assert.equal(parsed.parts.map((p) => p.text).join(''), 'ABC');
+});
+
+test('parseChunkForContent detects nested status FINISHED in array payload', () => {
+  const chunk = {
+    p: 'response',
+    v: [{ p: 'status', v: 'FINISHED' }],
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  assert.equal(parsed.finished, true);
+  assert.deepEqual(parsed.parts, []);
+});
+
+test('parseChunkForContent ignores items without v to match Go parser behavior', () => {
+  const chunk = {
+    p: 'response',
+    v: [{ type: 'RESPONSE', content: 'no-v-content' }],
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  assert.equal(parsed.finished, false);
+  assert.deepEqual(parsed.parts, []);
+});
+
+test('parseChunkForContent handles response/fragments APPEND with thinking and response transitions', () => {
+  const chunk = {
+    p: 'response/fragments',
+    o: 'APPEND',
+    v: [
+      { type: 'THINK', content: '思考中' },
+      { type: 'RESPONSE', content: '结论' },
+    ],
+  };
+  const parsed = parseChunkForContent(chunk, true, 'thinking');
+  assert.equal(parsed.finished, false);
+  assert.equal(parsed.newType, 'text');
+  assert.deepEqual(parsed.parts, [
+    { text: '思考中', type: 'thinking' },
+    { text: '结论', type: 'text' },
+  ]);
+});
+
+test('parseChunkForContent supports wrapped response.fragments object shape', () => {
+  const chunk = {
+    p: 'response',
+    v: {
+      response: {
+        fragments: [
+          { type: 'RESPONSE', content: 'A' },
+          { type: 'RESPONSE', content: 'B' },
+        ],
+      },
+    },
+  };
+  const parsed = parseChunkForContent(chunk, false, 'text');
+  assert.equal(parsed.finished, false);
+  assert.equal(parsed.parts.map((p) => p.text).join(''), 'AB');
+});

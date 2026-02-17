@@ -517,32 +517,11 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType) {
   }
 
   if (Array.isArray(val)) {
-    for (const entry of val) {
-      if (typeof entry === 'string') {
-        if (entry) {
-          parts.push({ text: entry, type: partType });
-        }
-        continue;
-      }
-      if (!entry || typeof entry !== 'object') {
-        continue;
-      }
-      if (asString(entry.p) === 'status' && asString(entry.v) === 'FINISHED') {
-        return { parts: [], finished: true, newType };
-      }
-      const content = asString(entry.content);
-      if (!content) {
-        continue;
-      }
-      const t = asString(entry.type).toUpperCase();
-      if (t === 'THINK' || t === 'THINKING') {
-        parts.push({ text: content, type: 'thinking' });
-      } else if (t === 'RESPONSE') {
-        parts.push({ text: content, type: 'text' });
-      } else {
-        parts.push({ text: content, type: partType });
-      }
+    const extracted = extractContentRecursive(val, partType);
+    if (extracted.finished) {
+      return { parts: [], finished: true, newType };
     }
+    parts.push(...extracted.parts);
     return { parts, finished: false, newType };
   }
 
@@ -571,6 +550,80 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType) {
     }
   }
   return { parts, finished: false, newType };
+}
+
+function extractContentRecursive(items, defaultType) {
+  const parts = [];
+  for (const it of items) {
+    if (!it || typeof it !== 'object') {
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(it, 'v')) {
+      continue;
+    }
+    const itemPath = asString(it.p);
+    const itemV = it.v;
+    if (itemPath === 'status' && asString(itemV) === 'FINISHED') {
+      return { parts: [], finished: true };
+    }
+    if (shouldSkipPath(itemPath)) {
+      continue;
+    }
+    const content = asString(it.content);
+    if (content) {
+      const typeName = asString(it.type).toUpperCase();
+      if (typeName === 'THINK' || typeName === 'THINKING') {
+        parts.push({ text: content, type: 'thinking' });
+      } else if (typeName === 'RESPONSE') {
+        parts.push({ text: content, type: 'text' });
+      } else {
+        parts.push({ text: content, type: defaultType });
+      }
+      continue;
+    }
+
+    let partType = defaultType;
+    if (itemPath.includes('thinking')) {
+      partType = 'thinking';
+    } else if (itemPath.includes('content') || itemPath === 'response' || itemPath === 'fragments') {
+      partType = 'text';
+    }
+
+    if (typeof itemV === 'string') {
+      if (itemV && itemV !== 'FINISHED') {
+        parts.push({ text: itemV, type: partType });
+      }
+      continue;
+    }
+
+    if (!Array.isArray(itemV)) {
+      continue;
+    }
+    for (const inner of itemV) {
+      if (typeof inner === 'string') {
+        if (inner) {
+          parts.push({ text: inner, type: partType });
+        }
+        continue;
+      }
+      if (!inner || typeof inner !== 'object') {
+        continue;
+      }
+      const ct = asString(inner.content);
+      if (!ct) {
+        continue;
+      }
+      const typeName = asString(inner.type).toUpperCase();
+      if (typeName === 'THINK' || typeName === 'THINKING') {
+        parts.push({ text: ct, type: 'thinking' });
+      } else if (typeName === 'RESPONSE') {
+        parts.push({ text: ct, type: 'text' });
+      } else {
+        parts.push({ text: ct, type: partType });
+      }
+    }
+  }
+  return { parts, finished: false };
 }
 
 function shouldSkipPath(pathValue) {
@@ -708,3 +761,10 @@ function asString(v) {
   }
   return String(v).trim();
 }
+
+module.exports.__test = {
+  parseChunkForContent,
+  extractContentRecursive,
+  shouldSkipPath,
+  asString,
+};

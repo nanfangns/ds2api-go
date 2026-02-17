@@ -23,6 +23,10 @@ DS2API 提供两个层级的测试：
 go test ./...
 ```
 
+```bash
+node --test api/helpers/stream-tool-sieve.test.js api/chat-stream.test.js
+```
+
 ### 端到端测试 | End-to-End Tests
 
 ```bash
@@ -35,6 +39,7 @@ go test ./...
    - `go test ./... -count=1`（单元测试）
    - `node --check api/chat-stream.js`（语法检查）
    - `node --check api/helpers/stream-tool-sieve.js`（语法检查）
+   - `node --test api/helpers/stream-tool-sieve.test.js api/chat-stream.test.js`（Node 流式拦截单测）
    - `npm run build --prefix webui`（WebUI 构建检查）
 
 2. **隔离启动**：复制 `config.json` 到临时目录，启动独立服务进程
