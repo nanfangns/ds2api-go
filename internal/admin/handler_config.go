@@ -37,6 +37,7 @@ func (h *Handler) getConfig(w http.ResponseWriter, _ *http.Request) {
 			}
 		}
 		accounts = append(accounts, map[string]any{
+			"identifier":    acc.Identifier(),
 			"email":         acc.Email,
 			"mobile":        acc.Mobile,
 			"has_password":  strings.TrimSpace(acc.Password) != "",

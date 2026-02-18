@@ -39,6 +39,10 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
     const [loadingAccounts, setLoadingAccounts] = useState(false)
 
     const apiFetch = authFetch || fetch
+    const resolveAccountIdentifier = (acc) => {
+        if (!acc || typeof acc !== 'object') return ''
+        return String(acc.identifier || acc.email || acc.mobile || '').trim()
+    }
 
     const fetchAccounts = async (targetPage = page) => {
         setLoadingAccounts(true)
@@ -147,9 +151,14 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
     }
 
     const deleteAccount = async (id) => {
+        const identifier = String(id || '').trim()
+        if (!identifier) {
+            onMessage('error', t('accountManager.invalidIdentifier'))
+            return
+        }
         if (!confirm(t('accountManager.deleteAccountConfirm'))) return
         try {
-            const res = await apiFetch(`/admin/accounts/${encodeURIComponent(id)}`, { method: 'DELETE' })
+            const res = await apiFetch(`/admin/accounts/${encodeURIComponent(identifier)}`, { method: 'DELETE' })
             if (res.ok) {
                 onMessage('success', t('messages.deleted'))
                 fetchAccounts() // 刷新当前页
@@ -163,24 +172,29 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
     }
 
     const testAccount = async (identifier) => {
-        setTesting(prev => ({ ...prev, [identifier]: true }))
+        const accountID = String(identifier || '').trim()
+        if (!accountID) {
+            onMessage('error', t('accountManager.invalidIdentifier'))
+            return
+        }
+        setTesting(prev => ({ ...prev, [accountID]: true }))
         try {
             const res = await apiFetch('/admin/accounts/test', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ identifier }),
+                body: JSON.stringify({ identifier: accountID }),
             })
             const data = await res.json()
             const statusMessage = data.success
-                ? t('apiTester.testSuccess', { account: identifier, time: data.response_time })
-                : `${identifier}: ${data.message}`
+                ? t('apiTester.testSuccess', { account: accountID, time: data.response_time })
+                : `${accountID}: ${data.message}`
             onMessage(data.success ? 'success' : 'error', statusMessage)
             fetchAccounts() // 刷新当前页
             onRefresh()
         } catch (e) {
             onMessage('error', t('accountManager.testFailed', { error: e.message }))
         } finally {
-            setTesting(prev => ({ ...prev, [identifier]: false }))
+            setTesting(prev => ({ ...prev, [accountID]: false }))
         }
     }
 
@@ -197,7 +211,12 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
 
         for (let i = 0; i < allAccounts.length; i++) {
             const acc = allAccounts[i]
-            const id = acc.email || acc.mobile
+            const id = resolveAccountIdentifier(acc)
+            if (!id) {
+                results.push({ id: '-', success: false, message: t('accountManager.invalidIdentifier') })
+                setBatchProgress({ current: i + 1, total: allAccounts.length, results: [...results] })
+                continue
+            }
 
             try {
                 const res = await apiFetch('/admin/accounts/test', {
@@ -387,7 +406,7 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
                         <div className="p-8 text-center text-muted-foreground">{t('actions.loading')}</div>
                     ) : accounts.length > 0 ? (
                         accounts.map((acc, i) => {
-                            const id = acc.email || acc.mobile
+                            const id = resolveAccountIdentifier(acc)
                             return (
                                 <div key={i} className="p-4 flex flex-col md:flex-row md:items-center justify-between gap-4 hover:bg-muted/50 transition-colors">
                                     <div className="flex items-center gap-3 min-w-0">
@@ -396,7 +415,7 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
                                             acc.has_token ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" : "bg-amber-500"
                                         )} />
                                         <div className="min-w-0">
-                                            <div className="font-medium truncate">{id}</div>
+                                            <div className="font-medium truncate">{id || '-'}</div>
                                             <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
                                                 <span>{acc.has_token ? t('accountManager.sessionActive') : t('accountManager.reauthRequired')}</span>
                                                 {acc.token_preview && (
@@ -419,7 +438,7 @@ export default function AccountManager({ config, onRefresh, onMessage, authFetch
                                             onClick={() => deleteAccount(id)}
                                             className="p-1 lg:p-1.5 text-muted-foreground hover:text-destructive hover:bg-destructive/10 rounded-md transition-colors"
                                         >
-                                            <Trash2 className="w-3.5 h-3.5 lg:w-4 h-4" />
+                                            <Trash2 className="w-3.5 h-3.5 lg:w-4 lg:h-4" />
                                         </button>
                                     </div>
                                 </div>

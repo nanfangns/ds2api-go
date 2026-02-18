@@ -56,7 +56,14 @@ func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
 				preview = token
 			}
 		}
-		items = append(items, map[string]any{"email": acc.Email, "mobile": acc.Mobile, "has_password": acc.Password != "", "has_token": token != "", "token_preview": preview})
+		items = append(items, map[string]any{
+			"identifier":    acc.Identifier(),
+			"email":         acc.Email,
+			"mobile":        acc.Mobile,
+			"has_password":  acc.Password != "",
+			"has_token":     token != "",
+			"token_preview": preview,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "page_size": pageSize, "total_pages": totalPages})
 }
@@ -94,7 +101,7 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	err := h.Store.Update(func(c *config.Config) error {
 		idx := -1
 		for i, a := range c.Accounts {
-			if a.Email == identifier || a.Mobile == identifier {
+			if accountMatchesIdentifier(a, identifier) {
 				idx = i
 				break
 			}
@@ -122,10 +129,10 @@ func (h *Handler) testSingleAccount(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	identifier, _ := req["identifier"].(string)
 	if strings.TrimSpace(identifier) == "" {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "需要账号标识（email 或 mobile）"})
+		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": "需要账号标识（identifier / email / mobile）"})
 		return
 	}
-	acc, ok := h.Store.FindAccount(identifier)
+	acc, ok := findAccountByIdentifier(h.Store, identifier)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"detail": "账号不存在"})
 		return

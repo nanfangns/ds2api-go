@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/google/uuid"
 
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
@@ -30,6 +31,8 @@ type Handler struct {
 
 	leaseMu      sync.Mutex
 	streamLeases map[string]streamLease
+	responsesMu  sync.Mutex
+	responses    *responseStore
 }
 
 type streamLease struct {
@@ -39,11 +42,25 @@ type streamLease struct {
 
 func RegisterRoutes(r chi.Router, h *Handler) {
 	r.Get("/v1/models", h.ListModels)
+	r.Get("/v1/models/{model_id}", h.GetModel)
 	r.Post("/v1/chat/completions", h.ChatCompletions)
+	r.Post("/v1/responses", h.Responses)
+	r.Get("/v1/responses/{response_id}", h.GetResponseByID)
+	r.Post("/v1/embeddings", h.Embeddings)
 }
 
 func (h *Handler) ListModels(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, config.OpenAIModelsResponse())
+}
+
+func (h *Handler) GetModel(w http.ResponseWriter, r *http.Request) {
+	modelID := strings.TrimSpace(chi.URLParam(r, "model_id"))
+	model, ok := config.OpenAIModelByID(h.Store, modelID)
+	if !ok {
+		writeOpenAIError(w, http.StatusNotFound, "Model not found.")
+		return
+	}
+	writeJSON(w, http.StatusOK, model)
 }
 
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -74,24 +91,11 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	model, _ := req["model"].(string)
-	messagesRaw, _ := req["messages"].([]any)
-	if model == "" || len(messagesRaw) == 0 {
-		writeOpenAIError(w, http.StatusBadRequest, "Request must include 'model' and 'messages'.")
+	stdReq, err := normalizeOpenAIChatRequest(h.Store, req)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	thinkingEnabled, searchEnabled, ok := config.GetModelConfig(model)
-	if !ok {
-		writeOpenAIError(w, http.StatusServiceUnavailable, fmt.Sprintf("Model '%s' is not available.", model))
-		return
-	}
-
-	messages := normalizeMessages(messagesRaw)
-	toolNames := []string{}
-	if tools, ok := req["tools"].([]any); ok && len(tools) > 0 {
-		messages, toolNames = injectToolPrompt(messages, tools)
-	}
-	finalPrompt := util.MessagesPrepare(messages)
 
 	sessionID, err := h.DS.CreateSession(r.Context(), a, 3)
 	if err != nil {
@@ -107,27 +111,20 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusUnauthorized, "Failed to get PoW (invalid token or unknown error).")
 		return
 	}
-	payload := map[string]any{
-		"chat_session_id":   sessionID,
-		"parent_message_id": nil,
-		"prompt":            finalPrompt,
-		"ref_file_ids":      []any{},
-		"thinking_enabled":  thinkingEnabled,
-		"search_enabled":    searchEnabled,
-	}
+	payload := stdReq.CompletionPayload(sessionID)
 	resp, err := h.DS.CallCompletion(r.Context(), a, payload, pow, 3)
 	if err != nil {
 		writeOpenAIError(w, http.StatusInternalServerError, "Failed to get completion.")
 		return
 	}
-	if util.ToBool(req["stream"]) {
-		h.handleStream(w, r, resp, sessionID, model, finalPrompt, thinkingEnabled, searchEnabled, toolNames)
+	if stdReq.Stream {
+		h.handleStream(w, r, resp, sessionID, stdReq.ResponseModel, stdReq.FinalPrompt, stdReq.Thinking, stdReq.Search, stdReq.ToolNames)
 		return
 	}
-	h.handleNonStream(w, r.Context(), resp, sessionID, model, finalPrompt, thinkingEnabled, searchEnabled, toolNames)
+	h.handleNonStream(w, r.Context(), resp, sessionID, stdReq.ResponseModel, stdReq.FinalPrompt, stdReq.Thinking, stdReq.ToolNames)
 }
 
-func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, resp *http.Response, completionID, model, finalPrompt string, thinkingEnabled, searchEnabled bool, toolNames []string) {
+func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, resp *http.Response, completionID, model, finalPrompt string, thinkingEnabled bool, toolNames []string) {
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
@@ -139,36 +136,8 @@ func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, re
 
 	finalThinking := result.Thinking
 	finalText := result.Text
-	detected := util.ParseToolCalls(finalText, toolNames)
-	finishReason := "stop"
-	messageObj := map[string]any{"role": "assistant", "content": finalText}
-	if thinkingEnabled && finalThinking != "" {
-		messageObj["reasoning_content"] = finalThinking
-	}
-	if len(detected) > 0 {
-		finishReason = "tool_calls"
-		messageObj["tool_calls"] = util.FormatOpenAIToolCalls(detected)
-		messageObj["content"] = nil
-	}
-	promptTokens := util.EstimateTokens(finalPrompt)
-	reasoningTokens := util.EstimateTokens(finalThinking)
-	completionTokens := util.EstimateTokens(finalText)
-
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":      completionID,
-		"object":  "chat.completion",
-		"created": time.Now().Unix(),
-		"model":   model,
-		"choices": []map[string]any{{"index": 0, "message": messageObj, "finish_reason": finishReason}},
-		"usage": map[string]any{
-			"prompt_tokens":     promptTokens,
-			"completion_tokens": reasoningTokens + completionTokens,
-			"total_tokens":      promptTokens + reasoningTokens + completionTokens,
-			"completion_tokens_details": map[string]any{
-				"reasoning_tokens": reasoningTokens,
-			},
-		},
-	})
+	respBody := util.BuildOpenAIChatCompletion(completionID, model, finalPrompt, finalThinking, finalText, toolNames)
+	writeJSON(w, http.StatusOK, respBody)
 }
 
 func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *http.Response, completionID, model, finalPrompt string, thinkingEnabled, searchEnabled bool, toolNames []string) {
@@ -190,9 +159,11 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 
 	created := time.Now().Unix()
 	firstChunkSent := false
-	bufferToolContent := len(toolNames) > 0
+	bufferToolContent := len(toolNames) > 0 && h.toolcallFeatureMatchEnabled()
+	emitEarlyToolDeltas := h.toolcallEarlyEmitHighConfidence()
 	var toolSieve toolStreamSieveState
 	toolCallsEmitted := false
+	streamToolCallIDs := map[int]string{}
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"
@@ -235,13 +206,13 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 				delta["role"] = "assistant"
 				firstChunkSent = true
 			}
-			sendChunk(map[string]any{
-				"id":      completionID,
-				"object":  "chat.completion.chunk",
-				"created": created,
-				"model":   model,
-				"choices": []map[string]any{{"delta": delta, "index": 0}},
-			})
+			sendChunk(util.BuildOpenAIChatStreamChunk(
+				completionID,
+				created,
+				model,
+				[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
+				nil,
+			))
 		} else if bufferToolContent {
 			for _, evt := range flushToolSieve(&toolSieve, toolNames) {
 				if evt.Content == "" {
@@ -254,36 +225,25 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 					delta["role"] = "assistant"
 					firstChunkSent = true
 				}
-				sendChunk(map[string]any{
-					"id":      completionID,
-					"object":  "chat.completion.chunk",
-					"created": created,
-					"model":   model,
-					"choices": []map[string]any{{"delta": delta, "index": 0}},
-				})
+				sendChunk(util.BuildOpenAIChatStreamChunk(
+					completionID,
+					created,
+					model,
+					[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
+					nil,
+				))
 			}
 		}
 		if len(detected) > 0 || toolCallsEmitted {
 			finishReason = "tool_calls"
 		}
-		promptTokens := util.EstimateTokens(finalPrompt)
-		reasoningTokens := util.EstimateTokens(finalThinking)
-		completionTokens := util.EstimateTokens(finalText)
-		sendChunk(map[string]any{
-			"id":      completionID,
-			"object":  "chat.completion.chunk",
-			"created": created,
-			"model":   model,
-			"choices": []map[string]any{{"delta": map[string]any{}, "index": 0, "finish_reason": finishReason}},
-			"usage": map[string]any{
-				"prompt_tokens":     promptTokens,
-				"completion_tokens": reasoningTokens + completionTokens,
-				"total_tokens":      promptTokens + reasoningTokens + completionTokens,
-				"completion_tokens_details": map[string]any{
-					"reasoning_tokens": reasoningTokens,
-				},
-			},
-		})
+		sendChunk(util.BuildOpenAIChatStreamChunk(
+			completionID,
+			created,
+			model,
+			[]map[string]any{util.BuildOpenAIChatStreamFinishChoice(0, finishReason)},
+			util.BuildOpenAIChatUsage(finalPrompt, finalThinking, finalText),
+		))
 		sendDone()
 	}
 
@@ -357,6 +317,21 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 							// Keep thinking delta only frame.
 						}
 						for _, evt := range events {
+							if len(evt.ToolCallDeltas) > 0 {
+								if !emitEarlyToolDeltas {
+									continue
+								}
+								toolCallsEmitted = true
+								tcDelta := map[string]any{
+									"tool_calls": formatIncrementalStreamToolCallDeltas(evt.ToolCallDeltas, streamToolCallIDs),
+								}
+								if !firstChunkSent {
+									tcDelta["role"] = "assistant"
+									firstChunkSent = true
+								}
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
+								continue
+							}
 							if len(evt.ToolCalls) > 0 {
 								toolCallsEmitted = true
 								tcDelta := map[string]any{
@@ -366,10 +341,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 									tcDelta["role"] = "assistant"
 									firstChunkSent = true
 								}
-								newChoices = append(newChoices, map[string]any{
-									"delta": tcDelta,
-									"index": 0,
-								})
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
 								continue
 							}
 							if evt.Content != "" {
@@ -380,40 +352,20 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 									contentDelta["role"] = "assistant"
 									firstChunkSent = true
 								}
-								newChoices = append(newChoices, map[string]any{
-									"delta": contentDelta,
-									"index": 0,
-								})
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, contentDelta))
 							}
 						}
 					}
 				}
 				if len(delta) > 0 {
-					newChoices = append(newChoices, map[string]any{"delta": delta, "index": 0})
+					newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, delta))
 				}
 			}
 			if len(newChoices) > 0 {
-				sendChunk(map[string]any{
-					"id":      completionID,
-					"object":  "chat.completion.chunk",
-					"created": created,
-					"model":   model,
-					"choices": newChoices,
-				})
+				sendChunk(util.BuildOpenAIChatStreamChunk(completionID, created, model, newChoices, nil))
 			}
 		}
 	}
-}
-
-func normalizeMessages(raw []any) []map[string]any {
-	out := make([]map[string]any, 0, len(raw))
-	for _, item := range raw {
-		m, ok := item.(map[string]any)
-		if ok {
-			out = append(out, m)
-		}
-	}
-	return out
 }
 
 func injectToolPrompt(messages []map[string]any, tools []any) ([]map[string]any, []string) {
@@ -444,7 +396,7 @@ func injectToolPrompt(messages []map[string]any, tools []any) ([]map[string]any,
 	if len(toolSchemas) == 0 {
 		return messages, names
 	}
-	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\nWhen you need to use tools, output ONLY this JSON format (no other text):\n{\"tool_calls\": [{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}]}\n\nIMPORTANT: If calling tools, output ONLY the JSON. The response must start with { and end with }"
+	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\nWhen you need to use tools, output ONLY this JSON format (no other text):\n{\"tool_calls\": [{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}]}\n\nIMPORTANT:\n1) If calling tools, output ONLY the JSON. The response must start with { and end with }.\n2) After receiving a tool result, you MUST use it to produce the final answer.\n3) Only call another tool when the previous result is missing required data or returned an error."
 
 	for i := range messages {
 		if messages[i]["role"] == "system" {
@@ -457,11 +409,47 @@ func injectToolPrompt(messages []map[string]any, tools []any) ([]map[string]any,
 	return messages, names
 }
 
+func formatIncrementalStreamToolCallDeltas(deltas []toolCallDelta, ids map[int]string) []map[string]any {
+	if len(deltas) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(deltas))
+	for _, d := range deltas {
+		if d.Name == "" && d.Arguments == "" {
+			continue
+		}
+		callID, ok := ids[d.Index]
+		if !ok || callID == "" {
+			callID = "call_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			ids[d.Index] = callID
+		}
+		item := map[string]any{
+			"index": d.Index,
+			"id":    callID,
+			"type":  "function",
+		}
+		fn := map[string]any{}
+		if d.Name != "" {
+			fn["name"] = d.Name
+		}
+		if d.Arguments != "" {
+			fn["arguments"] = d.Arguments
+		}
+		if len(fn) > 0 {
+			item["function"] = fn
+		}
+		out = append(out, item)
+	}
+	return out
+}
+
 func writeOpenAIError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{
 		"error": map[string]any{
 			"message": message,
 			"type":    openAIErrorType(status),
+			"code":    openAIErrorCode(status),
+			"param":   nil,
 		},
 	})
 }
@@ -484,4 +472,48 @@ func openAIErrorType(status int) string {
 		}
 		return "invalid_request_error"
 	}
+}
+
+func openAIErrorCode(status int) string {
+	switch status {
+	case http.StatusBadRequest:
+		return "invalid_request"
+	case http.StatusUnauthorized:
+		return "authentication_failed"
+	case http.StatusForbidden:
+		return "forbidden"
+	case http.StatusTooManyRequests:
+		return "rate_limit_exceeded"
+	case http.StatusNotFound:
+		return "not_found"
+	case http.StatusServiceUnavailable:
+		return "service_unavailable"
+	default:
+		if status >= 500 {
+			return "internal_error"
+		}
+		return "invalid_request"
+	}
+}
+
+func applyOpenAIChatPassThrough(req map[string]any, payload map[string]any) {
+	for k, v := range collectOpenAIChatPassThrough(req) {
+		payload[k] = v
+	}
+}
+
+func (h *Handler) toolcallFeatureMatchEnabled() bool {
+	if h == nil || h.Store == nil {
+		return true
+	}
+	mode := strings.TrimSpace(strings.ToLower(h.Store.ToolcallMode()))
+	return mode == "" || mode == "feature_match"
+}
+
+func (h *Handler) toolcallEarlyEmitHighConfidence() bool {
+	if h == nil || h.Store == nil {
+		return true
+	}
+	level := strings.TrimSpace(strings.ToLower(h.Store.ToolcallEarlyEmitConfidence()))
+	return level == "" || level == "high"
 }

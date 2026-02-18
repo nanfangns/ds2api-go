@@ -33,6 +33,33 @@ func TestMessagesPrepareRoles(t *testing.T) {
 	}
 }
 
+func TestMessagesPrepareObjectContent(t *testing.T) {
+	messages := []map[string]any{
+		{"role": "user", "content": map[string]any{"temp": 18, "ok": true}},
+	}
+	got := MessagesPrepare(messages)
+	if !contains(got, `"temp":18`) || !contains(got, `"ok":true`) {
+		t.Fatalf("expected serialized object content, got %q", got)
+	}
+}
+
+func TestMessagesPrepareArrayTextVariants(t *testing.T) {
+	messages := []map[string]any{
+		{
+			"role": "user",
+			"content": []any{
+				map[string]any{"type": "output_text", "text": "line1"},
+				map[string]any{"type": "input_text", "text": "line2"},
+				map[string]any{"type": "image_url", "image_url": "https://example.com/a.png"},
+			},
+		},
+	}
+	got := MessagesPrepare(messages)
+	if got != "line1\nline2" {
+		t.Fatalf("unexpected content from text variants: %q", got)
+	}
+}
+
 func TestConvertClaudeToDeepSeek(t *testing.T) {
 	store := config.LoadStore()
 	req := map[string]any{

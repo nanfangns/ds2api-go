@@ -10,10 +10,50 @@ const {
   flushToolSieve,
 } = require('./helpers/stream-tool-sieve');
 
-const { parseChunkForContent } = handler.__test;
+const {
+  parseChunkForContent,
+  resolveToolcallPolicy,
+  normalizePreparedToolNames,
+  boolDefaultTrue,
+} = handler.__test;
 
 test('chat-stream exposes parser test hooks', () => {
   assert.equal(typeof parseChunkForContent, 'function');
+  assert.equal(typeof resolveToolcallPolicy, 'function');
+});
+
+test('resolveToolcallPolicy defaults to feature-match + early emit when prepare flags missing', () => {
+  const policy = resolveToolcallPolicy(
+    {},
+    [{ type: 'function', function: { name: 'read_file', parameters: { type: 'object' } } }],
+  );
+  assert.deepEqual(policy.toolNames, ['read_file']);
+  assert.equal(policy.toolSieveEnabled, true);
+  assert.equal(policy.emitEarlyToolDeltas, true);
+});
+
+test('resolveToolcallPolicy respects prepare flags and prepared tool names', () => {
+  const policy = resolveToolcallPolicy(
+    {
+      tool_names: [' prepped_tool ', '', null],
+      toolcall_feature_match: false,
+      toolcall_early_emit_high: false,
+    },
+    [{ type: 'function', function: { name: 'fallback_tool', parameters: { type: 'object' } } }],
+  );
+  assert.deepEqual(policy.toolNames, ['prepped_tool']);
+  assert.equal(policy.toolSieveEnabled, false);
+  assert.equal(policy.emitEarlyToolDeltas, false);
+});
+
+test('normalizePreparedToolNames filters empty values', () => {
+  assert.deepEqual(normalizePreparedToolNames([' a ', '', null, 'b']), ['a', 'b']);
+});
+
+test('boolDefaultTrue keeps false only when explicitly false', () => {
+  assert.equal(boolDefaultTrue(false), false);
+  assert.equal(boolDefaultTrue(true), true);
+  assert.equal(boolDefaultTrue(undefined), true);
 });
 
 test('parseChunkForContent keeps split response/content fragments inside response array', () => {
@@ -49,12 +89,13 @@ test('parseChunkForContent + sieve does not leak suspicious prefix in split tool
   events.push(...flushToolSieve(state, ['read_file']));
 
   const hasToolCalls = events.some((evt) => evt.type === 'tool_calls' && evt.calls && evt.calls.length > 0);
+  const hasToolDeltas = events.some((evt) => evt.type === 'tool_call_deltas' && evt.deltas && evt.deltas.length > 0);
   const leakedText = events
     .filter((evt) => evt.type === 'text' && evt.text)
     .map((evt) => evt.text)
     .join('');
 
-  assert.equal(hasToolCalls, true);
+  assert.equal(hasToolCalls || hasToolDeltas, true);
   assert.equal(leakedText.includes('{'), false);
   assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
 });

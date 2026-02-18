@@ -33,6 +33,17 @@
 - **文件方式**：`config.json`（推荐本地/Docker 使用）
 - **环境变量方式**：`DS2API_CONFIG_JSON`（推荐 Vercel 使用，支持 JSON 字符串或 Base64 编码）
 
+统一建议（最优实践）：
+
+```bash
+cp config.example.json config.json
+# 编辑 config.json
+```
+
+建议把 `config.json` 作为唯一配置源：
+- 本地运行：直接读 `config.json`
+- Docker / Vercel：从 `config.json` 生成 `DS2API_CONFIG_JSON`（Base64）注入环境变量
+
 ---
 
 ## 一、本地运行
@@ -99,11 +110,15 @@ go build -o ds2api ./cmd/ds2api
 ### 2.1 基本步骤
 
 ```bash
-# 复制并编辑环境变量
+# 复制环境变量模板
 cp .env.example .env
-# 编辑 .env，至少设置：
+
+# 从 config.json 生成单行 Base64
+DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
+
+# 编辑 .env（请改成你的强密码），设置：
 #   DS2API_ADMIN_KEY=your-admin-key
-#   DS2API_CONFIG_JSON={"keys":[...],"accounts":[...]}
+#   DS2API_CONFIG_JSON=${DS2API_CONFIG_JSON}
 
 # 启动
 docker-compose up -d
@@ -167,14 +182,48 @@ healthcheck:
 
 1. **Fork 仓库**到你的 GitHub 账号
 2. **在 Vercel 上导入项目**
-3. **配置环境变量**（至少设置以下两项）：
+3. **配置环境变量**（最少只需设置以下一项）：
 
    | 变量 | 说明 |
    | --- | --- |
    | `DS2API_ADMIN_KEY` | 管理密钥（必填） |
-   | `DS2API_CONFIG_JSON` | 配置内容，JSON 字符串或 Base64 编码（必填） |
+   | `DS2API_CONFIG_JSON` | 配置内容，JSON 字符串或 Base64 编码（可选，建议） |
 
 4. **部署**
+
+### 3.1.1 推荐填写方式（避免 `DS2API_CONFIG_JSON` 填错）
+
+如果你想先完成一键部署，也可以先不填 `DS2API_CONFIG_JSON`，部署后进入 `/admin` 导入配置，再在「Vercel 同步」里写回环境变量。
+
+建议先在仓库目录复制示例配置，再按实际账号填写：
+
+```bash
+cp config.example.json config.json
+# 编辑 config.json
+```
+
+不要在 Vercel 面板里手写复杂 JSON，建议本地生成 Base64 后粘贴：
+
+```bash
+# 在仓库根目录执行
+DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
+echo "$DS2API_CONFIG_JSON"
+```
+
+如果你选择在部署前就预置配置，请在 Vercel Project Settings -> Environment Variables 配置：
+
+```text
+DS2API_ADMIN_KEY=请替换为强密码
+DS2API_CONFIG_JSON=上一步生成的一整行 Base64
+```
+
+可选但推荐（用于 WebUI 一键同步 Vercel 配置）：
+
+```text
+VERCEL_TOKEN=你的 Vercel Token
+VERCEL_PROJECT_ID=prj_xxxxxxxxxxxx
+VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # 个人账号可留空
+```
 
 ### 3.2 可选环境变量
 

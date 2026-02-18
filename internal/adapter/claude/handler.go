@@ -43,6 +43,9 @@ func (h *Handler) ListModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("anthropic-version")) == "" {
+		r.Header.Set("anthropic-version", "2023-06-01")
+	}
 	a, err := h.Auth.Determine(r)
 	if err != nil {
 		status := http.StatusUnauthorized
@@ -50,132 +53,79 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		if err == auth.ErrNoAccount {
 			status = http.StatusTooManyRequests
 		}
-		writeJSON(w, status, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": detail}})
+		writeClaudeError(w, status, detail)
 		return
 	}
 	defer h.Auth.Release(a)
 
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "invalid json"}})
+		writeClaudeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	model, _ := req["model"].(string)
-	messagesRaw, _ := req["messages"].([]any)
-	if model == "" || len(messagesRaw) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "Request must include 'model' and 'messages'."}})
+	norm, err := normalizeClaudeRequest(h.Store, req)
+	if err != nil {
+		writeClaudeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	normalized := normalizeClaudeMessages(messagesRaw)
-	payload := cloneMap(req)
-	payload["messages"] = normalized
-	toolsRequested, _ := req["tools"].([]any)
-	if len(toolsRequested) > 0 && !hasSystemMessage(normalized) {
-		payload["messages"] = append([]any{map[string]any{"role": "system", "content": buildClaudeToolPrompt(toolsRequested)}}, normalized...)
-	}
-
-	dsPayload := util.ConvertClaudeToDeepSeek(payload, h.Store)
-	dsModel, _ := dsPayload["model"].(string)
-	thinkingEnabled, searchEnabled, ok := config.GetModelConfig(dsModel)
-	if !ok {
-		thinkingEnabled = false
-		searchEnabled = false
-	}
-	finalPrompt := util.MessagesPrepare(toMessageMaps(dsPayload["messages"]))
+	stdReq := norm.Standard
 
 	sessionID, err := h.DS.CreateSession(r.Context(), a, 3)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "api_error", "message": "invalid token."}})
+		writeClaudeError(w, http.StatusUnauthorized, "invalid token.")
 		return
 	}
 	pow, err := h.DS.GetPow(r.Context(), a, 3)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "api_error", "message": "Failed to get PoW"}})
+		writeClaudeError(w, http.StatusUnauthorized, "Failed to get PoW")
 		return
 	}
-	requestPayload := map[string]any{
-		"chat_session_id":   sessionID,
-		"parent_message_id": nil,
-		"prompt":            finalPrompt,
-		"ref_file_ids":      []any{},
-		"thinking_enabled":  thinkingEnabled,
-		"search_enabled":    searchEnabled,
-	}
+	requestPayload := stdReq.CompletionPayload(sessionID)
 	resp, err := h.DS.CallCompletion(r.Context(), a, requestPayload, pow, 3)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": "Failed to get Claude response."}})
+		writeClaudeError(w, http.StatusInternalServerError, "Failed to get Claude response.")
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": string(body)}})
+		writeClaudeError(w, http.StatusInternalServerError, string(body))
 		return
 	}
 
-	toolNames := extractClaudeToolNames(toolsRequested)
-	if util.ToBool(req["stream"]) {
-		h.handleClaudeStreamRealtime(w, r, resp, model, normalized, thinkingEnabled, searchEnabled, toolNames)
+	if stdReq.Stream {
+		h.handleClaudeStreamRealtime(w, r, resp, stdReq.ResponseModel, norm.NormalizedMessages, stdReq.Thinking, stdReq.Search, stdReq.ToolNames)
 		return
 	}
-	result := sse.CollectStream(resp, thinkingEnabled, true)
-	fullText := result.Text
-	fullThinking := result.Thinking
-	detected := util.ParseToolCalls(fullText, toolNames)
-	content := make([]map[string]any, 0, 4)
-	if fullThinking != "" {
-		content = append(content, map[string]any{"type": "thinking", "thinking": fullThinking})
-	}
-	stopReason := "end_turn"
-	if len(detected) > 0 {
-		stopReason = "tool_use"
-		for i, tc := range detected {
-			content = append(content, map[string]any{
-				"type":  "tool_use",
-				"id":    fmt.Sprintf("toolu_%d_%d", time.Now().Unix(), i),
-				"name":  tc.Name,
-				"input": tc.Input,
-			})
-		}
-	} else {
-		if fullText == "" {
-			fullText = "抱歉，没有生成有效的响应内容。"
-		}
-		content = append(content, map[string]any{"type": "text", "text": fullText})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":            fmt.Sprintf("msg_%d", time.Now().UnixNano()),
-		"type":          "message",
-		"role":          "assistant",
-		"model":         model,
-		"content":       content,
-		"stop_reason":   stopReason,
-		"stop_sequence": nil,
-		"usage": map[string]any{
-			"input_tokens":  util.EstimateTokens(fmt.Sprintf("%v", normalized)),
-			"output_tokens": util.EstimateTokens(fullThinking) + util.EstimateTokens(fullText),
-		},
-	})
+	result := sse.CollectStream(resp, stdReq.Thinking, true)
+	respBody := util.BuildClaudeMessageResponse(
+		fmt.Sprintf("msg_%d", time.Now().UnixNano()),
+		stdReq.ResponseModel,
+		norm.NormalizedMessages,
+		result.Thinking,
+		result.Text,
+		stdReq.ToolNames,
+	)
+	writeJSON(w, http.StatusOK, respBody)
 }
 
 func (h *Handler) CountTokens(w http.ResponseWriter, r *http.Request) {
 	a, err := h.Auth.Determine(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+		writeClaudeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	defer h.Auth.Release(a)
 
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeClaudeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	model, _ := req["model"].(string)
 	messages, _ := req["messages"].([]any)
 	if model == "" || len(messages) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Request must include 'model' and 'messages'."})
+		writeClaudeError(w, http.StatusBadRequest, "Request must include 'model' and 'messages'.")
 		return
 	}
 	inputTokens := 0
@@ -206,7 +156,7 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": string(body)}})
+		writeClaudeError(w, http.StatusInternalServerError, string(body))
 		return
 	}
 
@@ -241,6 +191,8 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 			"error": map[string]any{
 				"type":    "api_error",
 				"message": msg,
+				"code":    "internal_error",
+				"param":   nil,
 			},
 		})
 	}
@@ -490,6 +442,28 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 			}
 		}
 	}
+}
+
+func writeClaudeError(w http.ResponseWriter, status int, message string) {
+	code := "invalid_request"
+	switch status {
+	case http.StatusUnauthorized:
+		code = "authentication_failed"
+	case http.StatusTooManyRequests:
+		code = "rate_limit_exceeded"
+	case http.StatusNotFound:
+		code = "not_found"
+	case http.StatusInternalServerError:
+		code = "internal_error"
+	}
+	writeJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"message": message,
+			"code":    code,
+			"param":   nil,
+		},
+	})
 }
 
 func normalizeClaudeMessages(messages []any) []any {

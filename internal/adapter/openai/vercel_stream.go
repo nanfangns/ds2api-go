@@ -56,23 +56,15 @@ func (h *Handler) handleVercelStreamPrepare(w http.ResponseWriter, r *http.Reque
 		writeOpenAIError(w, http.StatusBadRequest, "stream must be true")
 		return
 	}
-	model, _ := req["model"].(string)
-	messagesRaw, _ := req["messages"].([]any)
-	if model == "" || len(messagesRaw) == 0 {
-		writeOpenAIError(w, http.StatusBadRequest, "Request must include 'model' and 'messages'.")
+	stdReq, err := normalizeOpenAIChatRequest(h.Store, req)
+	if err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	thinkingEnabled, searchEnabled, ok := config.GetModelConfig(model)
-	if !ok {
-		writeOpenAIError(w, http.StatusServiceUnavailable, fmt.Sprintf("Model '%s' is not available.", model))
+	if !stdReq.Stream {
+		writeOpenAIError(w, http.StatusBadRequest, "stream must be true")
 		return
 	}
-
-	messages := normalizeMessages(messagesRaw)
-	if tools, ok := req["tools"].([]any); ok && len(tools) > 0 {
-		messages, _ = injectToolPrompt(messages, tools)
-	}
-	finalPrompt := util.MessagesPrepare(messages)
 
 	sessionID, err := h.DS.CreateSession(r.Context(), a, 3)
 	if err != nil {
@@ -93,14 +85,7 @@ func (h *Handler) handleVercelStreamPrepare(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	payload := map[string]any{
-		"chat_session_id":   sessionID,
-		"parent_message_id": nil,
-		"prompt":            finalPrompt,
-		"ref_file_ids":      []any{},
-		"thinking_enabled":  thinkingEnabled,
-		"search_enabled":    searchEnabled,
-	}
+	payload := stdReq.CompletionPayload(sessionID)
 	leaseID := h.holdStreamLease(a)
 	if leaseID == "" {
 		writeOpenAIError(w, http.StatusInternalServerError, "failed to create stream lease")
@@ -108,15 +93,18 @@ func (h *Handler) handleVercelStreamPrepare(w http.ResponseWriter, r *http.Reque
 	}
 	leased = true
 	writeJSON(w, http.StatusOK, map[string]any{
-		"session_id":       sessionID,
-		"lease_id":         leaseID,
-		"model":            model,
-		"final_prompt":     finalPrompt,
-		"thinking_enabled": thinkingEnabled,
-		"search_enabled":   searchEnabled,
-		"deepseek_token":   a.DeepSeekToken,
-		"pow_header":       powHeader,
-		"payload":          payload,
+		"session_id":               sessionID,
+		"lease_id":                 leaseID,
+		"model":                    stdReq.ResponseModel,
+		"final_prompt":             stdReq.FinalPrompt,
+		"thinking_enabled":         stdReq.Thinking,
+		"search_enabled":           stdReq.Search,
+		"tool_names":               stdReq.ToolNames,
+		"toolcall_feature_match":   h.toolcallFeatureMatchEnabled(),
+		"toolcall_early_emit_high": h.toolcallEarlyEmitHighConfidence(),
+		"deepseek_token":           a.DeepSeekToken,
+		"pow_header":               powHeader,
+		"payload":                  payload,
 	})
 }
 

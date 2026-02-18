@@ -1,6 +1,8 @@
 package util
 
 import (
+	"encoding/json"
+	"fmt"
 	"regexp"
 	"strings"
 
@@ -68,15 +70,25 @@ func normalizeContent(v any) string {
 			if !ok {
 				continue
 			}
-			if m["type"] == "text" {
+			typeStr, _ := m["type"].(string)
+			typeStr = strings.ToLower(strings.TrimSpace(typeStr))
+			if typeStr == "text" || typeStr == "output_text" || typeStr == "input_text" {
 				if txt, ok := m["text"].(string); ok {
+					parts = append(parts, txt)
+					continue
+				}
+				if txt, ok := m["content"].(string); ok {
 					parts = append(parts, txt)
 				}
 			}
 		}
 		return strings.Join(parts, "\n")
 	default:
-		return ""
+		b, err := json.Marshal(v)
+		if err != nil {
+			return fmt.Sprintf("%v", v)
+		}
+		return string(b)
 	}
 }
 

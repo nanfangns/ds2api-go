@@ -86,6 +86,7 @@
         "requiredFields": "需要填写密码以及邮箱或手机号",
         "deleteKeyConfirm": "确定要删除此 API 密钥吗？",
         "deleteAccountConfirm": "确定要删除此账号吗？",
+        "invalidIdentifier": "账号标识无效，无法执行操作",
         "testAllConfirm": "测试所有账号的 API 连通性？",
         "testAllCompleted": "完成：{success}/{total} 可用",
         "testFailed": "测试失败: {error}",
