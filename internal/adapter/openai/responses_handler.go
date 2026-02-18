@@ -144,13 +144,7 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 		}
 	}
 
-	sendEvent("response.created", map[string]any{
-		"type":   "response.created",
-		"id":     responseID,
-		"object": "response",
-		"model":  model,
-		"status": "in_progress",
-	})
+	sendEvent("response.created", util.BuildOpenAIResponsesCreatedPayload(responseID, model))
 
 	initialType := "text"
 	if thinkingEnabled {
@@ -172,19 +166,11 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 			for _, evt := range flushToolSieve(&sieve, toolNames) {
 				if evt.Content != "" {
 					finalText += evt.Content
-					sendEvent("response.output_text.delta", map[string]any{
-						"type":  "response.output_text.delta",
-						"id":    responseID,
-						"delta": evt.Content,
-					})
+					sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, evt.Content))
 				}
 				if len(evt.ToolCalls) > 0 {
 					toolCallsEmitted = true
-					sendEvent("response.output_tool_call.done", map[string]any{
-						"type":       "response.output_tool_call.done",
-						"id":         responseID,
-						"tool_calls": util.FormatOpenAIStreamToolCalls(evt.ToolCalls),
-					})
+					sendEvent("response.output_tool_call.done", util.BuildOpenAIResponsesToolCallDonePayload(responseID, util.FormatOpenAIStreamToolCalls(evt.ToolCalls)))
 				}
 			}
 		}
@@ -193,10 +179,7 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 			obj["status"] = "completed"
 		}
 		h.getResponseStore().put(owner, responseID, obj)
-		sendEvent("response.completed", map[string]any{
-			"type":     "response.completed",
-			"response": obj,
-		})
+		sendEvent("response.completed", util.BuildOpenAIResponsesCompletedPayload(obj))
 		_, _ = w.Write([]byte("data: [DONE]\n\n"))
 		if canFlush {
 			_ = rc.Flush()
@@ -232,48 +215,28 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 						continue
 					}
 					thinking.WriteString(p.Text)
-					sendEvent("response.reasoning.delta", map[string]any{
-						"type":  "response.reasoning.delta",
-						"id":    responseID,
-						"delta": p.Text,
-					})
+					sendEvent("response.reasoning.delta", util.BuildOpenAIResponsesReasoningDeltaPayload(responseID, p.Text))
 					continue
 				}
 				text.WriteString(p.Text)
 				if !bufferToolContent {
-					sendEvent("response.output_text.delta", map[string]any{
-						"type":  "response.output_text.delta",
-						"id":    responseID,
-						"delta": p.Text,
-					})
+					sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, p.Text))
 					continue
 				}
 				for _, evt := range processToolSieveChunk(&sieve, p.Text, toolNames) {
 					if evt.Content != "" {
-						sendEvent("response.output_text.delta", map[string]any{
-							"type":  "response.output_text.delta",
-							"id":    responseID,
-							"delta": evt.Content,
-						})
+						sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, evt.Content))
 					}
 					if len(evt.ToolCallDeltas) > 0 {
 						if !emitEarlyToolDeltas {
 							continue
 						}
 						toolCallsEmitted = true
-						sendEvent("response.output_tool_call.delta", map[string]any{
-							"type":       "response.output_tool_call.delta",
-							"id":         responseID,
-							"tool_calls": formatIncrementalStreamToolCallDeltas(evt.ToolCallDeltas, streamToolCallIDs),
-						})
+						sendEvent("response.output_tool_call.delta", util.BuildOpenAIResponsesToolCallDeltaPayload(responseID, formatIncrementalStreamToolCallDeltas(evt.ToolCallDeltas, streamToolCallIDs)))
 					}
 					if len(evt.ToolCalls) > 0 {
 						toolCallsEmitted = true
-						sendEvent("response.output_tool_call.done", map[string]any{
-							"type":       "response.output_tool_call.done",
-							"id":         responseID,
-							"tool_calls": util.FormatOpenAIStreamToolCalls(evt.ToolCalls),
-						})
+						sendEvent("response.output_tool_call.done", util.BuildOpenAIResponsesToolCallDonePayload(responseID, util.FormatOpenAIStreamToolCalls(evt.ToolCalls)))
 					}
 				}
 			}

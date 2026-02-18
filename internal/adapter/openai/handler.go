@@ -206,13 +206,13 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 				delta["role"] = "assistant"
 				firstChunkSent = true
 			}
-			sendChunk(map[string]any{
-				"id":      completionID,
-				"object":  "chat.completion.chunk",
-				"created": created,
-				"model":   model,
-				"choices": []map[string]any{{"delta": delta, "index": 0}},
-			})
+			sendChunk(util.BuildOpenAIChatStreamChunk(
+				completionID,
+				created,
+				model,
+				[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
+				nil,
+			))
 		} else if bufferToolContent {
 			for _, evt := range flushToolSieve(&toolSieve, toolNames) {
 				if evt.Content == "" {
@@ -225,36 +225,25 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 					delta["role"] = "assistant"
 					firstChunkSent = true
 				}
-				sendChunk(map[string]any{
-					"id":      completionID,
-					"object":  "chat.completion.chunk",
-					"created": created,
-					"model":   model,
-					"choices": []map[string]any{{"delta": delta, "index": 0}},
-				})
+				sendChunk(util.BuildOpenAIChatStreamChunk(
+					completionID,
+					created,
+					model,
+					[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
+					nil,
+				))
 			}
 		}
 		if len(detected) > 0 || toolCallsEmitted {
 			finishReason = "tool_calls"
 		}
-		promptTokens := util.EstimateTokens(finalPrompt)
-		reasoningTokens := util.EstimateTokens(finalThinking)
-		completionTokens := util.EstimateTokens(finalText)
-		sendChunk(map[string]any{
-			"id":      completionID,
-			"object":  "chat.completion.chunk",
-			"created": created,
-			"model":   model,
-			"choices": []map[string]any{{"delta": map[string]any{}, "index": 0, "finish_reason": finishReason}},
-			"usage": map[string]any{
-				"prompt_tokens":     promptTokens,
-				"completion_tokens": reasoningTokens + completionTokens,
-				"total_tokens":      promptTokens + reasoningTokens + completionTokens,
-				"completion_tokens_details": map[string]any{
-					"reasoning_tokens": reasoningTokens,
-				},
-			},
-		})
+		sendChunk(util.BuildOpenAIChatStreamChunk(
+			completionID,
+			created,
+			model,
+			[]map[string]any{util.BuildOpenAIChatStreamFinishChoice(0, finishReason)},
+			util.BuildOpenAIChatUsage(finalPrompt, finalThinking, finalText),
+		))
 		sendDone()
 	}
 
@@ -340,10 +329,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 									tcDelta["role"] = "assistant"
 									firstChunkSent = true
 								}
-								newChoices = append(newChoices, map[string]any{
-									"delta": tcDelta,
-									"index": 0,
-								})
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
 								continue
 							}
 							if len(evt.ToolCalls) > 0 {
@@ -355,10 +341,7 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 									tcDelta["role"] = "assistant"
 									firstChunkSent = true
 								}
-								newChoices = append(newChoices, map[string]any{
-									"delta": tcDelta,
-									"index": 0,
-								})
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
 								continue
 							}
 							if evt.Content != "" {
@@ -369,26 +352,17 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 									contentDelta["role"] = "assistant"
 									firstChunkSent = true
 								}
-								newChoices = append(newChoices, map[string]any{
-									"delta": contentDelta,
-									"index": 0,
-								})
+								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, contentDelta))
 							}
 						}
 					}
 				}
 				if len(delta) > 0 {
-					newChoices = append(newChoices, map[string]any{"delta": delta, "index": 0})
+					newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, delta))
 				}
 			}
 			if len(newChoices) > 0 {
-				sendChunk(map[string]any{
-					"id":      completionID,
-					"object":  "chat.completion.chunk",
-					"created": created,
-					"model":   model,
-					"choices": newChoices,
-				})
+				sendChunk(util.BuildOpenAIChatStreamChunk(completionID, created, model, newChoices, nil))
 			}
 		}
 	}
