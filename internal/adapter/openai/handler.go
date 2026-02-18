@@ -16,7 +16,9 @@ import (
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 	"ds2api/internal/deepseek"
+	openaifmt "ds2api/internal/format/openai"
 	"ds2api/internal/sse"
+	streamengine "ds2api/internal/stream"
 	"ds2api/internal/util"
 )
 
@@ -25,9 +27,9 @@ import (
 var writeJSON = util.WriteJSON
 
 type Handler struct {
-	Store *config.Store
-	Auth  *auth.Resolver
-	DS    *deepseek.Client
+	Store ConfigReader
+	Auth  AuthResolver
+	DS    DeepSeekCaller
 
 	leaseMu      sync.Mutex
 	streamLeases map[string]streamLease
@@ -136,7 +138,7 @@ func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, re
 
 	finalThinking := result.Thinking
 	finalText := result.Text
-	respBody := util.BuildOpenAIChatCompletion(completionID, model, finalPrompt, finalThinking, finalText, toolNames)
+	respBody := openaifmt.BuildChatCompletion(completionID, model, finalPrompt, finalThinking, finalText, toolNames)
 	writeJSON(w, http.StatusOK, respBody)
 }
 
@@ -158,214 +160,49 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 	}
 
 	created := time.Now().Unix()
-	firstChunkSent := false
 	bufferToolContent := len(toolNames) > 0 && h.toolcallFeatureMatchEnabled()
 	emitEarlyToolDeltas := h.toolcallEarlyEmitHighConfidence()
-	var toolSieve toolStreamSieveState
-	toolCallsEmitted := false
-	streamToolCallIDs := map[int]string{}
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"
 	}
-	parsedLines, done := sse.StartParsedLinePump(r.Context(), resp.Body, thinkingEnabled, initialType)
-	thinking := strings.Builder{}
-	text := strings.Builder{}
-	lastContent := time.Now()
-	hasContent := false
-	keepaliveTicker := time.NewTicker(time.Duration(deepseek.KeepAliveTimeout) * time.Second)
-	defer keepaliveTicker.Stop()
-	keepaliveCountWithoutContent := 0
 
-	sendChunk := func(v any) {
-		b, _ := json.Marshal(v)
-		_, _ = w.Write([]byte("data: "))
-		_, _ = w.Write(b)
-		_, _ = w.Write([]byte("\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
-	sendDone := func() {
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
+	streamRuntime := newChatStreamRuntime(
+		w,
+		rc,
+		canFlush,
+		completionID,
+		created,
+		model,
+		finalPrompt,
+		thinkingEnabled,
+		searchEnabled,
+		toolNames,
+		bufferToolContent,
+		emitEarlyToolDeltas,
+	)
 
-	finalize := func(finishReason string) {
-		finalThinking := thinking.String()
-		finalText := text.String()
-		detected := util.ParseToolCalls(finalText, toolNames)
-		if len(detected) > 0 && !toolCallsEmitted {
-			finishReason = "tool_calls"
-			delta := map[string]any{
-				"tool_calls": util.FormatOpenAIStreamToolCalls(detected),
-			}
-			if !firstChunkSent {
-				delta["role"] = "assistant"
-				firstChunkSent = true
-			}
-			sendChunk(util.BuildOpenAIChatStreamChunk(
-				completionID,
-				created,
-				model,
-				[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
-				nil,
-			))
-		} else if bufferToolContent {
-			for _, evt := range flushToolSieve(&toolSieve, toolNames) {
-				if evt.Content == "" {
-					continue
-				}
-				delta := map[string]any{
-					"content": evt.Content,
-				}
-				if !firstChunkSent {
-					delta["role"] = "assistant"
-					firstChunkSent = true
-				}
-				sendChunk(util.BuildOpenAIChatStreamChunk(
-					completionID,
-					created,
-					model,
-					[]map[string]any{util.BuildOpenAIChatStreamDeltaChoice(0, delta)},
-					nil,
-				))
-			}
-		}
-		if len(detected) > 0 || toolCallsEmitted {
-			finishReason = "tool_calls"
-		}
-		sendChunk(util.BuildOpenAIChatStreamChunk(
-			completionID,
-			created,
-			model,
-			[]map[string]any{util.BuildOpenAIChatStreamFinishChoice(0, finishReason)},
-			util.BuildOpenAIChatUsage(finalPrompt, finalThinking, finalText),
-		))
-		sendDone()
-	}
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-keepaliveTicker.C:
-			if !hasContent {
-				keepaliveCountWithoutContent++
-				if keepaliveCountWithoutContent >= deepseek.MaxKeepaliveCount {
-					finalize("stop")
-					return
-				}
-			}
-			if hasContent && time.Since(lastContent) > time.Duration(deepseek.StreamIdleTimeout)*time.Second {
-				finalize("stop")
+	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
+		Context:             r.Context(),
+		Body:                resp.Body,
+		ThinkingEnabled:     thinkingEnabled,
+		InitialType:         initialType,
+		KeepAliveInterval:   time.Duration(deepseek.KeepAliveTimeout) * time.Second,
+		IdleTimeout:         time.Duration(deepseek.StreamIdleTimeout) * time.Second,
+		MaxKeepAliveNoInput: deepseek.MaxKeepaliveCount,
+	}, streamengine.ConsumeHooks{
+		OnKeepAlive: func() {
+			streamRuntime.sendKeepAlive()
+		},
+		OnParsed: streamRuntime.onParsed,
+		OnFinalize: func(reason streamengine.StopReason, _ error) {
+			if string(reason) == "content_filter" {
+				streamRuntime.finalize("content_filter")
 				return
 			}
-			if canFlush {
-				_, _ = w.Write([]byte(": keep-alive\n\n"))
-				_ = rc.Flush()
-			}
-		case parsed, ok := <-parsedLines:
-			if !ok {
-				// Ensure scanner completion is observed only after all queued
-				// SSE lines are drained, avoiding early finalize races.
-				_ = <-done
-				finalize("stop")
-				return
-			}
-			if !parsed.Parsed {
-				continue
-			}
-			if parsed.ContentFilter || parsed.ErrorMessage != "" {
-				finalize("content_filter")
-				return
-			}
-			if parsed.Stop {
-				finalize("stop")
-				return
-			}
-			newChoices := make([]map[string]any, 0, len(parsed.Parts))
-			for _, p := range parsed.Parts {
-				if searchEnabled && sse.IsCitation(p.Text) {
-					continue
-				}
-				if p.Text == "" {
-					continue
-				}
-				hasContent = true
-				lastContent = time.Now()
-				keepaliveCountWithoutContent = 0
-				delta := map[string]any{}
-				if !firstChunkSent {
-					delta["role"] = "assistant"
-					firstChunkSent = true
-				}
-				if p.Type == "thinking" {
-					if thinkingEnabled {
-						thinking.WriteString(p.Text)
-						delta["reasoning_content"] = p.Text
-					}
-				} else {
-					text.WriteString(p.Text)
-					if !bufferToolContent {
-						delta["content"] = p.Text
-					} else {
-						events := processToolSieveChunk(&toolSieve, p.Text, toolNames)
-						if len(events) == 0 {
-							// Keep thinking delta only frame.
-						}
-						for _, evt := range events {
-							if len(evt.ToolCallDeltas) > 0 {
-								if !emitEarlyToolDeltas {
-									continue
-								}
-								toolCallsEmitted = true
-								tcDelta := map[string]any{
-									"tool_calls": formatIncrementalStreamToolCallDeltas(evt.ToolCallDeltas, streamToolCallIDs),
-								}
-								if !firstChunkSent {
-									tcDelta["role"] = "assistant"
-									firstChunkSent = true
-								}
-								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
-								continue
-							}
-							if len(evt.ToolCalls) > 0 {
-								toolCallsEmitted = true
-								tcDelta := map[string]any{
-									"tool_calls": util.FormatOpenAIStreamToolCalls(evt.ToolCalls),
-								}
-								if !firstChunkSent {
-									tcDelta["role"] = "assistant"
-									firstChunkSent = true
-								}
-								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, tcDelta))
-								continue
-							}
-							if evt.Content != "" {
-								contentDelta := map[string]any{
-									"content": evt.Content,
-								}
-								if !firstChunkSent {
-									contentDelta["role"] = "assistant"
-									firstChunkSent = true
-								}
-								newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, contentDelta))
-							}
-						}
-					}
-				}
-				if len(delta) > 0 {
-					newChoices = append(newChoices, util.BuildOpenAIChatStreamDeltaChoice(0, delta))
-				}
-			}
-			if len(newChoices) > 0 {
-				sendChunk(util.BuildOpenAIChatStreamChunk(completionID, created, model, newChoices, nil))
-			}
-		}
-	}
+			streamRuntime.finalize("stop")
+		},
+	})
 }
 
 func injectToolPrompt(messages []map[string]any, tools []any) ([]map[string]any, []string) {

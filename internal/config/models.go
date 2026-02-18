@@ -10,6 +10,10 @@ type ModelInfo struct {
 	Permission []any  `json:"permission,omitempty"`
 }
 
+type ModelAliasReader interface {
+	ModelAliases() map[string]string
+}
+
 var DeepSeekModels = []ModelInfo{
 	{ID: "deepseek-chat", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Permission: []any{}},
 	{ID: "deepseek-reasoner", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Permission: []any{}},
@@ -104,7 +108,7 @@ func DefaultModelAliases() map[string]string {
 	}
 }
 
-func ResolveModel(store *Store, requested string) (string, bool) {
+func ResolveModel(store ModelAliasReader, requested string) (string, bool) {
 	model := lower(strings.TrimSpace(requested))
 	if model == "" {
 		return "", false
@@ -172,7 +176,7 @@ func OpenAIModelsResponse() map[string]any {
 	return map[string]any{"object": "list", "data": DeepSeekModels}
 }
 
-func OpenAIModelByID(store *Store, id string) (ModelInfo, bool) {
+func OpenAIModelByID(store ModelAliasReader, id string) (ModelInfo, bool) {
 	canonical, ok := ResolveModel(store, id)
 	if !ok {
 		return ModelInfo{}, false

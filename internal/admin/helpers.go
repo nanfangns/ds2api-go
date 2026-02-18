@@ -96,7 +96,7 @@ func accountMatchesIdentifier(acc config.Account, identifier string) bool {
 	return acc.Identifier() == id
 }
 
-func findAccountByIdentifier(store *config.Store, identifier string) (config.Account, bool) {
+func findAccountByIdentifier(store ConfigStore, identifier string) (config.Account, bool) {
 	id := strings.TrimSpace(identifier)
 	if id == "" {
 		return config.Account{}, false

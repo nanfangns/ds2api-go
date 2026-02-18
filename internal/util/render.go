@@ -8,6 +8,8 @@ import (
 	"github.com/google/uuid"
 )
 
+// BuildOpenAIChatCompletion is kept for backward compatibility.
+// Prefer internal/format/openai.BuildChatCompletion for new code.
 func BuildOpenAIChatCompletion(completionID, model, finalPrompt, finalThinking, finalText string, toolNames []string) map[string]any {
 	detected := ParseToolCalls(finalText, toolNames)
 	finishReason := "stop"
@@ -41,6 +43,8 @@ func BuildOpenAIChatCompletion(completionID, model, finalPrompt, finalThinking, 
 	}
 }
 
+// BuildOpenAIResponseObject is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponseObject for new code.
 func BuildOpenAIResponseObject(responseID, model, finalPrompt, finalThinking, finalText string, toolNames []string) map[string]any {
 	detected := ParseToolCalls(finalText, toolNames)
 	exposedOutputText := finalText
@@ -101,6 +105,8 @@ func BuildOpenAIResponseObject(responseID, model, finalPrompt, finalThinking, fi
 	}
 }
 
+// BuildClaudeMessageResponse is kept for backward compatibility.
+// Prefer internal/format/claude.BuildMessageResponse for new code.
 func BuildClaudeMessageResponse(messageID, model string, normalizedMessages []any, finalThinking, finalText string, toolNames []string) map[string]any {
 	detected := ParseToolCalls(finalText, toolNames)
 	content := make([]map[string]any, 0, 4)

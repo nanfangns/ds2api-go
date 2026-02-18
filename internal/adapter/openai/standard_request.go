@@ -8,7 +8,7 @@ import (
 	"ds2api/internal/util"
 )
 
-func normalizeOpenAIChatRequest(store *config.Store, req map[string]any) (util.StandardRequest, error) {
+func normalizeOpenAIChatRequest(store ConfigReader, req map[string]any) (util.StandardRequest, error) {
 	model, _ := req["model"].(string)
 	messagesRaw, _ := req["messages"].([]any)
 	if strings.TrimSpace(model) == "" || len(messagesRaw) == 0 {
@@ -41,7 +41,7 @@ func normalizeOpenAIChatRequest(store *config.Store, req map[string]any) (util.S
 	}, nil
 }
 
-func normalizeOpenAIResponsesRequest(store *config.Store, req map[string]any) (util.StandardRequest, error) {
+func normalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any) (util.StandardRequest, error) {
 	model, _ := req["model"].(string)
 	model = strings.TrimSpace(model)
 	if model == "" {

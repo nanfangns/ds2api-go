@@ -6,13 +6,16 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 
 	"ds2api/internal/auth"
+	"ds2api/internal/deepseek"
+	openaifmt "ds2api/internal/format/openai"
 	"ds2api/internal/sse"
-	"ds2api/internal/util"
+	streamengine "ds2api/internal/stream"
 )
 
 func (h *Handler) GetResponseByID(w http.ResponseWriter, r *http.Request) {
@@ -108,7 +111,7 @@ func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Res
 		return
 	}
 	result := sse.CollectStream(resp, thinkingEnabled, true)
-	responseObj := util.BuildOpenAIResponseObject(responseID, model, finalPrompt, result.Thinking, result.Text, toolNames)
+	responseObj := openaifmt.BuildResponseObject(responseID, model, finalPrompt, result.Thinking, result.Text, toolNames)
 	h.getResponseStore().put(owner, responseID, responseObj)
 	writeJSON(w, http.StatusOK, responseObj)
 }
@@ -127,114 +130,45 @@ func (h *Handler) handleResponsesStream(w http.ResponseWriter, r *http.Request, 
 	rc := http.NewResponseController(w)
 	canFlush := rc.Flush() == nil
 
-	sendEvent := func(event string, payload map[string]any) {
-		b, _ := json.Marshal(payload)
-		_, _ = w.Write([]byte("event: " + event + "\n"))
-		_, _ = w.Write([]byte("data: "))
-		_, _ = w.Write(b)
-		_, _ = w.Write([]byte("\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
-
-	sendEvent("response.created", util.BuildOpenAIResponsesCreatedPayload(responseID, model))
-
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"
 	}
-	parsedLines, done := sse.StartParsedLinePump(r.Context(), resp.Body, thinkingEnabled, initialType)
 	bufferToolContent := len(toolNames) > 0 && h.toolcallFeatureMatchEnabled()
 	emitEarlyToolDeltas := h.toolcallEarlyEmitHighConfidence()
-	var sieve toolStreamSieveState
-	thinking := strings.Builder{}
-	text := strings.Builder{}
-	toolCallsEmitted := false
-	streamToolCallIDs := map[int]string{}
 
-	finalize := func() {
-		finalThinking := thinking.String()
-		finalText := text.String()
-		if bufferToolContent {
-			for _, evt := range flushToolSieve(&sieve, toolNames) {
-				if evt.Content != "" {
-					sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, evt.Content))
-				}
-				if len(evt.ToolCalls) > 0 {
-					toolCallsEmitted = true
-					sendEvent("response.output_tool_call.done", util.BuildOpenAIResponsesToolCallDonePayload(responseID, util.FormatOpenAIStreamToolCalls(evt.ToolCalls)))
-				}
-			}
-		}
-		obj := util.BuildOpenAIResponseObject(responseID, model, finalPrompt, finalThinking, finalText, toolNames)
-		if toolCallsEmitted {
-			obj["status"] = "completed"
-		}
-		h.getResponseStore().put(owner, responseID, obj)
-		sendEvent("response.completed", util.BuildOpenAIResponsesCompletedPayload(obj))
-		_, _ = w.Write([]byte("data: [DONE]\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
+	streamRuntime := newResponsesStreamRuntime(
+		w,
+		rc,
+		canFlush,
+		responseID,
+		model,
+		finalPrompt,
+		thinkingEnabled,
+		searchEnabled,
+		toolNames,
+		bufferToolContent,
+		emitEarlyToolDeltas,
+		func(obj map[string]any) {
+			h.getResponseStore().put(owner, responseID, obj)
+		},
+	)
+	streamRuntime.sendCreated()
 
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case parsed, ok := <-parsedLines:
-			if !ok {
-				_ = <-done
-				finalize()
-				return
-			}
-			if !parsed.Parsed {
-				continue
-			}
-			if parsed.ContentFilter || parsed.ErrorMessage != "" || parsed.Stop {
-				finalize()
-				return
-			}
-			for _, p := range parsed.Parts {
-				if p.Text == "" {
-					continue
-				}
-				if p.Type != "thinking" && searchEnabled && sse.IsCitation(p.Text) {
-					continue
-				}
-				if p.Type == "thinking" {
-					if !thinkingEnabled {
-						continue
-					}
-					thinking.WriteString(p.Text)
-					sendEvent("response.reasoning.delta", util.BuildOpenAIResponsesReasoningDeltaPayload(responseID, p.Text))
-					continue
-				}
-				text.WriteString(p.Text)
-				if !bufferToolContent {
-					sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, p.Text))
-					continue
-				}
-				for _, evt := range processToolSieveChunk(&sieve, p.Text, toolNames) {
-					if evt.Content != "" {
-						sendEvent("response.output_text.delta", util.BuildOpenAIResponsesTextDeltaPayload(responseID, evt.Content))
-					}
-					if len(evt.ToolCallDeltas) > 0 {
-						if !emitEarlyToolDeltas {
-							continue
-						}
-						toolCallsEmitted = true
-						sendEvent("response.output_tool_call.delta", util.BuildOpenAIResponsesToolCallDeltaPayload(responseID, formatIncrementalStreamToolCallDeltas(evt.ToolCallDeltas, streamToolCallIDs)))
-					}
-					if len(evt.ToolCalls) > 0 {
-						toolCallsEmitted = true
-						sendEvent("response.output_tool_call.done", util.BuildOpenAIResponsesToolCallDonePayload(responseID, util.FormatOpenAIStreamToolCalls(evt.ToolCalls)))
-					}
-				}
-			}
-		}
-	}
+	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
+		Context:             r.Context(),
+		Body:                resp.Body,
+		ThinkingEnabled:     thinkingEnabled,
+		InitialType:         initialType,
+		KeepAliveInterval:   time.Duration(deepseek.KeepAliveTimeout) * time.Second,
+		IdleTimeout:         time.Duration(deepseek.StreamIdleTimeout) * time.Second,
+		MaxKeepAliveNoInput: deepseek.MaxKeepaliveCount,
+	}, streamengine.ConsumeHooks{
+		OnParsed: streamRuntime.onParsed,
+		OnFinalize: func(_ streamengine.StopReason, _ error) {
+			streamRuntime.finalize()
+		},
+	})
 }
 
 func responsesMessagesFromRequest(req map[string]any) []any {

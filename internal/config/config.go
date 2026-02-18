@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -63,6 +64,8 @@ type Config struct {
 	ClaudeMapping    map[string]string `json:"claude_mapping,omitempty"`
 	ClaudeModelMap   map[string]string `json:"claude_model_mapping,omitempty"`
 	ModelAliases     map[string]string `json:"model_aliases,omitempty"`
+	Admin            AdminConfig       `json:"admin,omitempty"`
+	Runtime          RuntimeConfig     `json:"runtime,omitempty"`
 	Compat           CompatConfig      `json:"compat,omitempty"`
 	Toolcall         ToolcallConfig    `json:"toolcall,omitempty"`
 	Responses        ResponsesConfig   `json:"responses,omitempty"`
@@ -74,6 +77,18 @@ type Config struct {
 
 type CompatConfig struct {
 	WideInputStrictOutput *bool `json:"wide_input_strict_output,omitempty"`
+}
+
+type AdminConfig struct {
+	PasswordHash      string `json:"password_hash,omitempty"`
+	JWTExpireHours    int    `json:"jwt_expire_hours,omitempty"`
+	JWTValidAfterUnix int64  `json:"jwt_valid_after_unix,omitempty"`
+}
+
+type RuntimeConfig struct {
+	AccountMaxInflight int `json:"account_max_inflight,omitempty"`
+	AccountMaxQueue    int `json:"account_max_queue,omitempty"`
+	GlobalMaxInflight  int `json:"global_max_inflight,omitempty"`
 }
 
 type ToolcallConfig struct {
@@ -108,6 +123,12 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	}
 	if len(c.ModelAliases) > 0 {
 		m["model_aliases"] = c.ModelAliases
+	}
+	if strings.TrimSpace(c.Admin.PasswordHash) != "" || c.Admin.JWTExpireHours > 0 || c.Admin.JWTValidAfterUnix > 0 {
+		m["admin"] = c.Admin
+	}
+	if c.Runtime.AccountMaxInflight > 0 || c.Runtime.AccountMaxQueue > 0 || c.Runtime.GlobalMaxInflight > 0 {
+		m["runtime"] = c.Runtime
 	}
 	if c.Compat.WideInputStrictOutput != nil {
 		m["compat"] = c.Compat
@@ -158,6 +179,14 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 			if err := json.Unmarshal(v, &c.ModelAliases); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
 			}
+		case "admin":
+			if err := json.Unmarshal(v, &c.Admin); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "runtime":
+			if err := json.Unmarshal(v, &c.Runtime); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "compat":
 			if err := json.Unmarshal(v, &c.Compat); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
@@ -199,6 +228,8 @@ func (c Config) Clone() Config {
 		ClaudeMapping:  cloneStringMap(c.ClaudeMapping),
 		ClaudeModelMap: cloneStringMap(c.ClaudeModelMap),
 		ModelAliases:   cloneStringMap(c.ModelAliases),
+		Admin:          c.Admin,
+		Runtime:        c.Runtime,
 		Compat: CompatConfig{
 			WideInputStrictOutput: cloneBoolPtr(c.Compat.WideInputStrictOutput),
 		},
@@ -620,4 +651,93 @@ func (s *Store) EmbeddingsProvider() string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return strings.TrimSpace(s.cfg.Embeddings.Provider)
+}
+
+func (s *Store) AdminPasswordHash() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cfg.Admin.PasswordHash)
+}
+
+func (s *Store) AdminJWTExpireHours() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Admin.JWTExpireHours > 0 {
+		return s.cfg.Admin.JWTExpireHours
+	}
+	if raw := strings.TrimSpace(os.Getenv("DS2API_JWT_EXPIRE_HOURS")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 24
+}
+
+func (s *Store) AdminJWTValidAfterUnix() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.Admin.JWTValidAfterUnix
+}
+
+func (s *Store) RuntimeAccountMaxInflight() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.AccountMaxInflight > 0 {
+		return s.cfg.Runtime.AccountMaxInflight
+	}
+	for _, key := range []string{"DS2API_ACCOUNT_MAX_INFLIGHT", "DS2API_ACCOUNT_CONCURRENCY"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 2
+}
+
+func (s *Store) RuntimeAccountMaxQueue(defaultSize int) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.AccountMaxQueue > 0 {
+		return s.cfg.Runtime.AccountMaxQueue
+	}
+	for _, key := range []string{"DS2API_ACCOUNT_MAX_QUEUE", "DS2API_ACCOUNT_QUEUE_SIZE"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n >= 0 {
+			return n
+		}
+	}
+	if defaultSize < 0 {
+		return 0
+	}
+	return defaultSize
+}
+
+func (s *Store) RuntimeGlobalMaxInflight(defaultSize int) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.GlobalMaxInflight > 0 {
+		return s.cfg.Runtime.GlobalMaxInflight
+	}
+	for _, key := range []string{"DS2API_GLOBAL_MAX_INFLIGHT", "DS2API_MAX_INFLIGHT"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	if defaultSize < 0 {
+		return 0
+	}
+	return defaultSize
 }

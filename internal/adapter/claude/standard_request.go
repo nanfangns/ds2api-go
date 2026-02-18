@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"ds2api/internal/config"
+	"ds2api/internal/deepseek"
 	"ds2api/internal/util"
 )
 
@@ -13,7 +14,7 @@ type claudeNormalizedRequest struct {
 	NormalizedMessages []any
 }
 
-func normalizeClaudeRequest(store *config.Store, req map[string]any) (claudeNormalizedRequest, error) {
+func normalizeClaudeRequest(store ConfigReader, req map[string]any) (claudeNormalizedRequest, error) {
 	model, _ := req["model"].(string)
 	messagesRaw, _ := req["messages"].([]any)
 	if strings.TrimSpace(model) == "" || len(messagesRaw) == 0 {
@@ -30,14 +31,14 @@ func normalizeClaudeRequest(store *config.Store, req map[string]any) (claudeNorm
 		payload["messages"] = append([]any{map[string]any{"role": "system", "content": buildClaudeToolPrompt(toolsRequested)}}, normalizedMessages...)
 	}
 
-	dsPayload := util.ConvertClaudeToDeepSeek(payload, store)
+	dsPayload := convertClaudeToDeepSeek(payload, store)
 	dsModel, _ := dsPayload["model"].(string)
 	thinkingEnabled, searchEnabled, ok := config.GetModelConfig(dsModel)
 	if !ok {
 		thinkingEnabled = false
 		searchEnabled = false
 	}
-	finalPrompt := util.MessagesPrepare(toMessageMaps(dsPayload["messages"]))
+	finalPrompt := deepseek.MessagesPrepare(toMessageMaps(dsPayload["messages"]))
 	toolNames := extractClaudeToolNames(toolsRequested)
 
 	return claudeNormalizedRequest{

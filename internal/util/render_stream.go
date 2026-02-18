@@ -1,5 +1,7 @@
 package util
 
+// BuildOpenAIChatStreamDeltaChoice is kept for backward compatibility.
+// Prefer internal/format/openai.BuildChatStreamDeltaChoice for new code.
 func BuildOpenAIChatStreamDeltaChoice(index int, delta map[string]any) map[string]any {
 	return map[string]any{
 		"delta": delta,
@@ -7,6 +9,8 @@ func BuildOpenAIChatStreamDeltaChoice(index int, delta map[string]any) map[strin
 	}
 }
 
+// BuildOpenAIChatStreamFinishChoice is kept for backward compatibility.
+// Prefer internal/format/openai.BuildChatStreamFinishChoice for new code.
 func BuildOpenAIChatStreamFinishChoice(index int, finishReason string) map[string]any {
 	return map[string]any{
 		"delta":         map[string]any{},
@@ -15,6 +19,8 @@ func BuildOpenAIChatStreamFinishChoice(index int, finishReason string) map[strin
 	}
 }
 
+// BuildOpenAIChatStreamChunk is kept for backward compatibility.
+// Prefer internal/format/openai.BuildChatStreamChunk for new code.
 func BuildOpenAIChatStreamChunk(completionID string, created int64, model string, choices []map[string]any, usage map[string]any) map[string]any {
 	out := map[string]any{
 		"id":      completionID,
@@ -29,6 +35,8 @@ func BuildOpenAIChatStreamChunk(completionID string, created int64, model string
 	return out
 }
 
+// BuildOpenAIChatUsage is kept for backward compatibility.
+// Prefer internal/format/openai.BuildChatUsage for new code.
 func BuildOpenAIChatUsage(finalPrompt, finalThinking, finalText string) map[string]any {
 	promptTokens := EstimateTokens(finalPrompt)
 	reasoningTokens := EstimateTokens(finalThinking)
@@ -43,6 +51,8 @@ func BuildOpenAIChatUsage(finalPrompt, finalThinking, finalText string) map[stri
 	}
 }
 
+// BuildOpenAIResponsesCreatedPayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesCreatedPayload for new code.
 func BuildOpenAIResponsesCreatedPayload(responseID, model string) map[string]any {
 	return map[string]any{
 		"type":   "response.created",
@@ -53,6 +63,8 @@ func BuildOpenAIResponsesCreatedPayload(responseID, model string) map[string]any
 	}
 }
 
+// BuildOpenAIResponsesTextDeltaPayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesTextDeltaPayload for new code.
 func BuildOpenAIResponsesTextDeltaPayload(responseID, delta string) map[string]any {
 	return map[string]any{
 		"type":  "response.output_text.delta",
@@ -61,6 +73,8 @@ func BuildOpenAIResponsesTextDeltaPayload(responseID, delta string) map[string]a
 	}
 }
 
+// BuildOpenAIResponsesReasoningDeltaPayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesReasoningDeltaPayload for new code.
 func BuildOpenAIResponsesReasoningDeltaPayload(responseID, delta string) map[string]any {
 	return map[string]any{
 		"type":  "response.reasoning.delta",
@@ -69,6 +83,8 @@ func BuildOpenAIResponsesReasoningDeltaPayload(responseID, delta string) map[str
 	}
 }
 
+// BuildOpenAIResponsesToolCallDeltaPayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesToolCallDeltaPayload for new code.
 func BuildOpenAIResponsesToolCallDeltaPayload(responseID string, toolCalls []map[string]any) map[string]any {
 	return map[string]any{
 		"type":       "response.output_tool_call.delta",
@@ -77,6 +93,8 @@ func BuildOpenAIResponsesToolCallDeltaPayload(responseID string, toolCalls []map
 	}
 }
 
+// BuildOpenAIResponsesToolCallDonePayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesToolCallDonePayload for new code.
 func BuildOpenAIResponsesToolCallDonePayload(responseID string, toolCalls []map[string]any) map[string]any {
 	return map[string]any{
 		"type":       "response.output_tool_call.done",
@@ -85,6 +103,8 @@ func BuildOpenAIResponsesToolCallDonePayload(responseID string, toolCalls []map[
 	}
 }
 
+// BuildOpenAIResponsesCompletedPayload is kept for backward compatibility.
+// Prefer internal/format/openai.BuildResponsesCompletedPayload for new code.
 func BuildOpenAIResponsesCompletedPayload(response map[string]any) map[string]any {
 	return map[string]any{
 		"type":     "response.completed",

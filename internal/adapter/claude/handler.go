@@ -13,7 +13,9 @@ import (
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 	"ds2api/internal/deepseek"
+	claudefmt "ds2api/internal/format/claude"
 	"ds2api/internal/sse"
+	streamengine "ds2api/internal/stream"
 	"ds2api/internal/util"
 )
 
@@ -21,9 +23,9 @@ import (
 var writeJSON = util.WriteJSON
 
 type Handler struct {
-	Store *config.Store
-	Auth  *auth.Resolver
-	DS    *deepseek.Client
+	Store ConfigReader
+	Auth  AuthResolver
+	DS    DeepSeekCaller
 }
 
 var (
@@ -98,7 +100,7 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	result := sse.CollectStream(resp, stdReq.Thinking, true)
-	respBody := util.BuildClaudeMessageResponse(
+	respBody := claudefmt.BuildMessageResponse(
 		fmt.Sprintf("msg_%d", time.Now().UnixNano()),
 		stdReq.ResponseModel,
 		norm.NormalizedMessages,
@@ -169,279 +171,38 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 	if !canFlush {
 		config.Logger.Warn("[claude_stream] response writer does not support flush; streaming may be buffered")
 	}
-	send := func(event string, v any) {
-		b, _ := json.Marshal(v)
-		_, _ = w.Write([]byte("event: "))
-		_, _ = w.Write([]byte(event))
-		_, _ = w.Write([]byte("\n"))
-		_, _ = w.Write([]byte("data: "))
-		_, _ = w.Write(b)
-		_, _ = w.Write([]byte("\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
-	sendError := func(message string) {
-		msg := strings.TrimSpace(message)
-		if msg == "" {
-			msg = "upstream stream error"
-		}
-		send("error", map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"type":    "api_error",
-				"message": msg,
-				"code":    "internal_error",
-				"param":   nil,
-			},
-		})
-	}
 
-	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	inputTokens := util.EstimateTokens(fmt.Sprintf("%v", messages))
-	send("message_start", map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id":            messageID,
-			"type":          "message",
-			"role":          "assistant",
-			"model":         model,
-			"content":       []any{},
-			"stop_reason":   nil,
-			"stop_sequence": nil,
-			"usage":         map[string]any{"input_tokens": inputTokens, "output_tokens": 0},
-		},
-	})
+	streamRuntime := newClaudeStreamRuntime(
+		w,
+		rc,
+		canFlush,
+		model,
+		messages,
+		thinkingEnabled,
+		searchEnabled,
+		toolNames,
+	)
+	streamRuntime.sendMessageStart()
 
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"
 	}
-	parsedLines, done := sse.StartParsedLinePump(r.Context(), resp.Body, thinkingEnabled, initialType)
-	bufferToolContent := len(toolNames) > 0
-	hasContent := false
-	lastContent := time.Now()
-	keepaliveCount := 0
-
-	thinking := strings.Builder{}
-	text := strings.Builder{}
-
-	nextBlockIndex := 0
-	thinkingBlockOpen := false
-	thinkingBlockIndex := -1
-	textBlockOpen := false
-	textBlockIndex := -1
-	ended := false
-
-	closeThinkingBlock := func() {
-		if !thinkingBlockOpen {
-			return
-		}
-		send("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": thinkingBlockIndex,
-		})
-		thinkingBlockOpen = false
-		thinkingBlockIndex = -1
-	}
-	closeTextBlock := func() {
-		if !textBlockOpen {
-			return
-		}
-		send("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": textBlockIndex,
-		})
-		textBlockOpen = false
-		textBlockIndex = -1
-	}
-
-	finalize := func(stopReason string) {
-		if ended {
-			return
-		}
-		ended = true
-
-		closeThinkingBlock()
-		closeTextBlock()
-
-		finalThinking := thinking.String()
-		finalText := text.String()
-
-		if bufferToolContent {
-			detected := util.ParseToolCalls(finalText, toolNames)
-			if len(detected) > 0 {
-				stopReason = "tool_use"
-				for i, tc := range detected {
-					idx := nextBlockIndex + i
-					send("content_block_start", map[string]any{
-						"type":  "content_block_start",
-						"index": idx,
-						"content_block": map[string]any{
-							"type":  "tool_use",
-							"id":    fmt.Sprintf("toolu_%d_%d", time.Now().Unix(), idx),
-							"name":  tc.Name,
-							"input": tc.Input,
-						},
-					})
-					send("content_block_stop", map[string]any{
-						"type":  "content_block_stop",
-						"index": idx,
-					})
-				}
-				nextBlockIndex += len(detected)
-			} else if finalText != "" {
-				idx := nextBlockIndex
-				nextBlockIndex++
-				send("content_block_start", map[string]any{
-					"type":  "content_block_start",
-					"index": idx,
-					"content_block": map[string]any{
-						"type": "text",
-						"text": "",
-					},
-				})
-				send("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": idx,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": finalText,
-					},
-				})
-				send("content_block_stop", map[string]any{
-					"type":  "content_block_stop",
-					"index": idx,
-				})
-			}
-		}
-
-		outputTokens := util.EstimateTokens(finalThinking) + util.EstimateTokens(finalText)
-		send("message_delta", map[string]any{
-			"type": "message_delta",
-			"delta": map[string]any{
-				"stop_reason":   stopReason,
-				"stop_sequence": nil,
-			},
-			"usage": map[string]any{
-				"output_tokens": outputTokens,
-			},
-		})
-		send("message_stop", map[string]any{"type": "message_stop"})
-	}
-
-	pingTicker := time.NewTicker(claudeStreamPingInterval)
-	defer pingTicker.Stop()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-pingTicker.C:
-			if !hasContent {
-				keepaliveCount++
-				if keepaliveCount >= claudeStreamMaxKeepaliveCnt {
-					finalize("end_turn")
-					return
-				}
-			}
-			if hasContent && time.Since(lastContent) > claudeStreamIdleTimeout {
-				finalize("end_turn")
-				return
-			}
-			send("ping", map[string]any{"type": "ping"})
-		case parsed, ok := <-parsedLines:
-			if !ok {
-				if err := <-done; err != nil {
-					sendError(err.Error())
-					return
-				}
-				finalize("end_turn")
-				return
-			}
-			if !parsed.Parsed {
-				continue
-			}
-			if parsed.ErrorMessage != "" {
-				sendError(parsed.ErrorMessage)
-				return
-			}
-			if parsed.Stop {
-				finalize("end_turn")
-				return
-			}
-
-			for _, p := range parsed.Parts {
-				if p.Text == "" {
-					continue
-				}
-				if p.Type != "thinking" && searchEnabled && sse.IsCitation(p.Text) {
-					continue
-				}
-
-				hasContent = true
-				lastContent = time.Now()
-				keepaliveCount = 0
-
-				if p.Type == "thinking" {
-					if !thinkingEnabled {
-						continue
-					}
-					thinking.WriteString(p.Text)
-					closeTextBlock()
-					if !thinkingBlockOpen {
-						thinkingBlockIndex = nextBlockIndex
-						nextBlockIndex++
-						send("content_block_start", map[string]any{
-							"type":  "content_block_start",
-							"index": thinkingBlockIndex,
-							"content_block": map[string]any{
-								"type":     "thinking",
-								"thinking": "",
-							},
-						})
-						thinkingBlockOpen = true
-					}
-					send("content_block_delta", map[string]any{
-						"type":  "content_block_delta",
-						"index": thinkingBlockIndex,
-						"delta": map[string]any{
-							"type":     "thinking_delta",
-							"thinking": p.Text,
-						},
-					})
-					continue
-				}
-
-				text.WriteString(p.Text)
-				if bufferToolContent {
-					continue
-				}
-				closeThinkingBlock()
-				if !textBlockOpen {
-					textBlockIndex = nextBlockIndex
-					nextBlockIndex++
-					send("content_block_start", map[string]any{
-						"type":  "content_block_start",
-						"index": textBlockIndex,
-						"content_block": map[string]any{
-							"type": "text",
-							"text": "",
-						},
-					})
-					textBlockOpen = true
-				}
-				send("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": textBlockIndex,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": p.Text,
-					},
-				})
-			}
-		}
-	}
+	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
+		Context:             r.Context(),
+		Body:                resp.Body,
+		ThinkingEnabled:     thinkingEnabled,
+		InitialType:         initialType,
+		KeepAliveInterval:   claudeStreamPingInterval,
+		IdleTimeout:         claudeStreamIdleTimeout,
+		MaxKeepAliveNoInput: claudeStreamMaxKeepaliveCnt,
+	}, streamengine.ConsumeHooks{
+		OnKeepAlive: func() {
+			streamRuntime.sendPing()
+		},
+		OnParsed:   streamRuntime.onParsed,
+		OnFinalize: streamRuntime.onFinalize,
+	})
 }
 
 func writeClaudeError(w http.ResponseWriter, status int, message string) {

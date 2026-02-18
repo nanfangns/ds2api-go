@@ -20,6 +20,10 @@
         "vercel": {
             "label": "Vercel 同步",
             "desc": "同步配置到 Vercel"
+        },
+        "settings": {
+            "label": "设置中心",
+            "desc": "在线修改系统设置与配置"
         }
     },
     "sidebar": {
@@ -191,6 +195,51 @@
         "importing": "正在导入...",
         "importComplete": "导入操作已完成",
         "importSummary": "成功导入了 {keys} 个 API 密钥，并更新了 {accounts} 个账号。"
+    },
+    "settings": {
+        "loadFailed": "加载设置失败",
+        "save": "保存设置",
+        "saving": "保存中...",
+        "saveSuccess": "设置已保存并热更新生效",
+        "saveFailed": "保存设置失败",
+        "securityTitle": "安全设置",
+        "jwtExpireHours": "JWT 有效期（小时）",
+        "newPassword": "面板新密码",
+        "newPasswordPlaceholder": "输入新密码（至少 4 位）",
+        "updatePassword": "修改密码",
+        "updating": "更新中...",
+        "passwordTooShort": "新密码至少 4 位",
+        "passwordUpdated": "密码已更新，需重新登录",
+        "passwordUpdateFailed": "密码更新失败",
+        "runtimeTitle": "并发与队列",
+        "accountMaxInflight": "每账号并发上限",
+        "accountMaxQueue": "账号等待队列上限",
+        "globalMaxInflight": "全局并发上限",
+        "behaviorTitle": "行为设置",
+        "toolcallMode": "Toolcall 模式",
+        "earlyEmitConfidence": "早发置信度",
+        "responsesTTL": "Responses 缓存 TTL（秒）",
+        "embeddingsProvider": "Embeddings Provider",
+        "modelTitle": "模型映射",
+        "claudeMapping": "Claude 映射（JSON）",
+        "modelAliases": "模型别名（JSON）",
+        "backupTitle": "备份与恢复",
+        "loadExport": "加载当前导出",
+        "importModeMerge": "合并导入（默认）",
+        "importModeReplace": "全量覆盖导入",
+        "importNow": "立即导入",
+        "importing": "导入中...",
+        "importPlaceholder": "粘贴要导入的 JSON 配置",
+        "importEmpty": "请先输入导入 JSON",
+        "importInvalidJson": "导入 JSON 格式无效",
+        "importFailed": "导入失败",
+        "importSuccess": "配置导入成功（模式：{mode}）",
+        "exportFailed": "导出失败",
+        "exportLoaded": "已加载当前配置导出",
+        "exportJson": "导出 JSON",
+        "invalidJsonField": "{field} 不是有效 JSON 对象",
+        "defaultPasswordWarning": "当前使用默认密码 admin，请尽快在此修改。",
+        "vercelSyncHint": "当前配置已更新。Vercel 部署请到 Vercel 同步页面手动同步并重部署。"
     },
     "login": {
         "welcome": "欢迎回来",

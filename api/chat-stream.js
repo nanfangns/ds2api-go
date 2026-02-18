@@ -10,30 +10,13 @@ const {
   parseToolCalls,
   formatOpenAIStreamToolCalls,
 } = require('./helpers/stream-tool-sieve');
+const {
+  BASE_HEADERS,
+  SKIP_PATTERNS,
+  SKIP_EXACT_PATHS,
+} = require('./shared/deepseek-constants');
 
 const DEEPSEEK_COMPLETION_URL = 'https://chat.deepseek.com/api/v0/chat/completion';
-
-const BASE_HEADERS = {
-  Host: 'chat.deepseek.com',
-  'User-Agent': 'DeepSeek/1.6.11 Android/35',
-  Accept: 'application/json',
-  'Content-Type': 'application/json',
-  'x-client-platform': 'android',
-  'x-client-version': '1.6.11',
-  'x-client-locale': 'zh_CN',
-  'accept-charset': 'UTF-8',
-};
-
-const SKIP_PATTERNS = [
-  'quasi_status',
-  'elapsed_secs',
-  'token_usage',
-  'pending_fragment',
-  'conversation_mode',
-  'fragments/-1/status',
-  'fragments/-2/status',
-  'fragments/-3/status',
-];
 
 module.exports = async function handler(req, res) {
   setCorsHeaders(res);
@@ -725,7 +708,7 @@ function extractContentRecursive(items, defaultType) {
 }
 
 function shouldSkipPath(pathValue) {
-  if (pathValue === 'response/search_status') {
+  if (SKIP_EXACT_PATHS.has(pathValue)) {
     return true;
   }
   for (const p of SKIP_PATTERNS) {
@@ -808,7 +791,16 @@ function estimateTokens(text) {
   if (!t) {
     return 0;
   }
-  const n = Math.floor(Array.from(t).length / 4);
+  let asciiChars = 0;
+  let nonASCIIChars = 0;
+  for (const ch of Array.from(t)) {
+    if (ch.charCodeAt(0) < 128) {
+      asciiChars += 1;
+    } else {
+      nonASCIIChars += 1;
+    }
+  }
+  const n = Math.floor(asciiChars / 4) + Math.floor((nonASCIIChars * 10 + 7) / 13);
   return n < 1 ? 1 : n;
 }
 
@@ -972,4 +964,5 @@ module.exports.__test = {
   resolveToolcallPolicy,
   normalizePreparedToolNames,
   boolDefaultTrue,
+  estimateTokens,
 };

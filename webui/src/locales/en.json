@@ -20,6 +20,10 @@
         "vercel": {
             "label": "Vercel Sync",
             "desc": "Sync configuration to Vercel"
+        },
+        "settings": {
+            "label": "Settings",
+            "desc": "Edit runtime and security settings online"
         }
     },
     "sidebar": {
@@ -191,6 +195,51 @@
         "importing": "Importing...",
         "importComplete": "Import complete",
         "importSummary": "Imported {keys} API keys and updated {accounts} accounts."
+    },
+    "settings": {
+        "loadFailed": "Failed to load settings.",
+        "save": "Save settings",
+        "saving": "Saving...",
+        "saveSuccess": "Settings saved and hot reloaded.",
+        "saveFailed": "Failed to save settings.",
+        "securityTitle": "Security",
+        "jwtExpireHours": "JWT expiry (hours)",
+        "newPassword": "New admin password",
+        "newPasswordPlaceholder": "Enter new password (min 4 chars)",
+        "updatePassword": "Update password",
+        "updating": "Updating...",
+        "passwordTooShort": "Password must be at least 4 characters.",
+        "passwordUpdated": "Password updated. Please sign in again.",
+        "passwordUpdateFailed": "Failed to update password.",
+        "runtimeTitle": "Concurrency & Queue",
+        "accountMaxInflight": "Per-account max inflight",
+        "accountMaxQueue": "Account max queue size",
+        "globalMaxInflight": "Global max inflight",
+        "behaviorTitle": "Behavior",
+        "toolcallMode": "Toolcall mode",
+        "earlyEmitConfidence": "Early emit confidence",
+        "responsesTTL": "Responses store TTL (seconds)",
+        "embeddingsProvider": "Embeddings provider",
+        "modelTitle": "Model mapping",
+        "claudeMapping": "Claude mapping (JSON)",
+        "modelAliases": "Model aliases (JSON)",
+        "backupTitle": "Backup & Restore",
+        "loadExport": "Load current export",
+        "importModeMerge": "Merge import (default)",
+        "importModeReplace": "Replace all import",
+        "importNow": "Import now",
+        "importing": "Importing...",
+        "importPlaceholder": "Paste config JSON to import",
+        "importEmpty": "Please input import JSON.",
+        "importInvalidJson": "Import JSON is invalid.",
+        "importFailed": "Import failed.",
+        "importSuccess": "Config imported (mode: {mode}).",
+        "exportFailed": "Export failed.",
+        "exportLoaded": "Current export loaded.",
+        "exportJson": "Export JSON",
+        "invalidJsonField": "{field} is not a valid JSON object.",
+        "defaultPasswordWarning": "You are using the default admin password \"admin\". Please change it.",
+        "vercelSyncHint": "Configuration changed. For Vercel deployments, sync manually in Vercel Sync and redeploy."
     },
     "login": {
         "welcome": "Welcome back",
