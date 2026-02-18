@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -28,10 +30,21 @@ func main() {
 		Addr:    "0.0.0.0:" + port,
 		Handler: app.Router,
 	}
+	localURL := fmt.Sprintf("http://127.0.0.1:%s", port)
+	lanIP := detectLANIPv4()
+	lanURL := ""
+	if lanIP != "" {
+		lanURL = fmt.Sprintf("http://%s:%s", lanIP, port)
+	}
 
 	// Start server in a goroutine so we can listen for shutdown signals.
 	go func() {
-		config.Logger.Info("starting ds2api", "port", port)
+		if lanURL != "" {
+			config.Logger.Info("starting ds2api", "bind", srv.Addr, "port", port, "local_url", localURL, "lan_url", lanURL, "lan_ip", lanIP)
+		} else {
+			config.Logger.Info("starting ds2api", "bind", srv.Addr, "port", port, "local_url", localURL)
+			config.Logger.Warn("lan ip not detected; check active network interfaces")
+		}
 		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			config.Logger.Error("server stopped unexpectedly", "error", err)
 			os.Exit(1)
@@ -53,4 +66,37 @@ func main() {
 		os.Exit(1)
 	}
 	config.Logger.Info("server gracefully stopped")
+}
+
+func detectLANIPv4() string {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return ""
+	}
+	for _, iface := range ifaces {
+		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		for _, addr := range addrs {
+			var ip net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				ip = v.IP
+			case *net.IPAddr:
+				ip = v.IP
+			default:
+				continue
+			}
+			ip = ip.To4()
+			if ip == nil || !ip.IsPrivate() {
+				continue
+			}
+			return ip.String()
+		}
+	}
+	return ""
 }
