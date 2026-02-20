@@ -2,16 +2,12 @@ package admin
 
 import (
 	"github.com/go-chi/chi/v5"
-
-	"ds2api/internal/account"
-	"ds2api/internal/config"
-	"ds2api/internal/deepseek"
 )
 
 type Handler struct {
-	Store *config.Store
-	Pool  *account.Pool
-	DS    *deepseek.Client
+	Store ConfigStore
+	Pool  PoolController
+	DS    DeepSeekCaller
 }
 
 func RegisterRoutes(r chi.Router, h *Handler) {
@@ -22,6 +18,11 @@ func RegisterRoutes(r chi.Router, h *Handler) {
 		pr.Get("/vercel/config", h.getVercelConfig)
 		pr.Get("/config", h.getConfig)
 		pr.Post("/config", h.updateConfig)
+		pr.Get("/settings", h.getSettings)
+		pr.Put("/settings", h.updateSettings)
+		pr.Post("/settings/password", h.updateSettingsPassword)
+		pr.Post("/config/import", h.configImport)
+		pr.Get("/config/export", h.configExport)
 		pr.Post("/keys", h.addKey)
 		pr.Delete("/keys/{key}", h.deleteKey)
 		pr.Get("/accounts", h.listAccounts)

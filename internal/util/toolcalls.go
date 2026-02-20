@@ -10,6 +10,7 @@ import (
 
 var toolCallPattern = regexp.MustCompile(`\{\s*["']tool_calls["']\s*:\s*\[(.*?)\]\s*\}`)
 var fencedJSONPattern = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
+var fencedBlockPattern = regexp.MustCompile("(?s)```.*?```")
 
 type ParsedToolCall struct {
 	Name  string         `json:"name"`
@@ -17,6 +18,10 @@ type ParsedToolCall struct {
 }
 
 func ParseToolCalls(text string, availableToolNames []string) []ParsedToolCall {
+	if strings.TrimSpace(text) == "" {
+		return nil
+	}
+	text = stripFencedCodeBlocks(text)
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -33,6 +38,34 @@ func ParseToolCalls(text string, availableToolNames []string) []ParsedToolCall {
 		return nil
 	}
 
+	return filterToolCalls(parsed, availableToolNames)
+}
+
+func ParseStandaloneToolCalls(text string, availableToolNames []string) []ParsedToolCall {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return nil
+	}
+	if looksLikeToolExampleContext(trimmed) {
+		return nil
+	}
+	candidates := []string{trimmed}
+	for _, candidate := range candidates {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		if !strings.HasPrefix(candidate, "{") && !strings.HasPrefix(candidate, "[") {
+			continue
+		}
+		if parsed := parseToolCallsPayload(candidate); len(parsed) > 0 {
+			return filterToolCalls(parsed, availableToolNames)
+		}
+	}
+	return nil
+}
+
+func filterToolCalls(parsed []ParsedToolCall, availableToolNames []string) []ParsedToolCall {
 	allowed := map[string]struct{}{}
 	for _, name := range availableToolNames {
 		allowed[name] = struct{}{}
@@ -281,6 +314,21 @@ func extractJSONObject(text string, start int) (string, int, bool) {
 		}
 	}
 	return "", 0, false
+}
+
+func looksLikeToolExampleContext(text string) bool {
+	t := strings.ToLower(strings.TrimSpace(text))
+	if t == "" {
+		return false
+	}
+	return strings.Contains(t, "```")
+}
+
+func stripFencedCodeBlocks(text string) string {
+	if strings.TrimSpace(text) == "" {
+		return ""
+	}
+	return fencedBlockPattern.ReplaceAllString(text, " ")
 }
 
 func FormatOpenAIToolCalls(calls []ParsedToolCall) []map[string]any {

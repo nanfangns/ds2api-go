@@ -12,7 +12,7 @@ import (
 
 func (h *Handler) requireAdmin(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if err := authn.VerifyAdminRequest(r); err != nil {
+		if err := authn.VerifyAdminRequestWithStore(r, h.Store); err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": err.Error()})
 			return
 		}
@@ -25,17 +25,17 @@ func (h *Handler) login(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewDecoder(r.Body).Decode(&req)
 	adminKey, _ := req["admin_key"].(string)
 	expireHours := intFrom(req["expire_hours"])
-	if expireHours <= 0 {
-		expireHours = 24
-	}
-	if adminKey != authn.AdminKey() {
+	if !authn.VerifyAdminCredential(adminKey, h.Store) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": "Invalid admin key"})
 		return
 	}
-	token, err := authn.CreateJWT(expireHours)
+	token, err := authn.CreateJWTWithStore(expireHours, h.Store)
 	if err != nil {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"detail": err.Error()})
 		return
+	}
+	if expireHours <= 0 {
+		expireHours = h.Store.AdminJWTExpireHours()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "token": token, "expires_in": expireHours * 3600})
 }
@@ -47,7 +47,7 @@ func (h *Handler) verify(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	token := strings.TrimSpace(header[7:])
-	payload, err := authn.VerifyJWT(token)
+	payload, err := authn.VerifyJWTWithStore(token, h.Store)
 	if err != nil {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"detail": err.Error()})
 		return

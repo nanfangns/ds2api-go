@@ -1,13 +1,10 @@
 package util
 
 import (
-	"regexp"
-	"strings"
-
+	"ds2api/internal/claudeconv"
 	"ds2api/internal/config"
+	"ds2api/internal/prompt"
 )
-
-var markdownImagePattern = regexp.MustCompile(`!\[(.*?)\]\((.*?)\)`)
 
 const ClaudeDefaultModel = "claude-sonnet-4-5"
 
@@ -17,102 +14,15 @@ type Message struct {
 }
 
 func MessagesPrepare(messages []map[string]any) string {
-	type block struct {
-		Role string
-		Text string
-	}
-	processed := make([]block, 0, len(messages))
-	for _, m := range messages {
-		role, _ := m["role"].(string)
-		text := normalizeContent(m["content"])
-		processed = append(processed, block{Role: role, Text: text})
-	}
-	if len(processed) == 0 {
-		return ""
-	}
-	merged := make([]block, 0, len(processed))
-	for _, msg := range processed {
-		if len(merged) > 0 && merged[len(merged)-1].Role == msg.Role {
-			merged[len(merged)-1].Text += "\n\n" + msg.Text
-			continue
-		}
-		merged = append(merged, msg)
-	}
-	parts := make([]string, 0, len(merged))
-	for i, m := range merged {
-		switch m.Role {
-		case "assistant":
-			parts = append(parts, "<｜Assistant｜>"+m.Text+"<｜end▁of▁sentence｜>")
-		case "user", "system":
-			if i > 0 {
-				parts = append(parts, "<｜User｜>"+m.Text)
-			} else {
-				parts = append(parts, m.Text)
-			}
-		default:
-			parts = append(parts, m.Text)
-		}
-	}
-	out := strings.Join(parts, "")
-	return markdownImagePattern.ReplaceAllString(out, `[${1}](${2})`)
+	return prompt.MessagesPrepare(messages)
 }
 
 func normalizeContent(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case []any:
-		parts := make([]string, 0, len(x))
-		for _, item := range x {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			if m["type"] == "text" {
-				if txt, ok := m["text"].(string); ok {
-					parts = append(parts, txt)
-				}
-			}
-		}
-		return strings.Join(parts, "\n")
-	default:
-		return ""
-	}
+	return prompt.NormalizeContent(v)
 }
 
 func ConvertClaudeToDeepSeek(claudeReq map[string]any, store *config.Store) map[string]any {
-	messages, _ := claudeReq["messages"].([]any)
-	model, _ := claudeReq["model"].(string)
-	if model == "" {
-		model = ClaudeDefaultModel
-	}
-	mapping := store.ClaudeMapping()
-	dsModel := mapping["fast"]
-	if dsModel == "" {
-		dsModel = "deepseek-chat"
-	}
-	modelLower := strings.ToLower(model)
-	if strings.Contains(modelLower, "opus") || strings.Contains(modelLower, "reasoner") || strings.Contains(modelLower, "slow") {
-		if slow := mapping["slow"]; slow != "" {
-			dsModel = slow
-		}
-	}
-	convertedMessages := make([]any, 0, len(messages)+1)
-	if system, ok := claudeReq["system"].(string); ok && system != "" {
-		convertedMessages = append(convertedMessages, map[string]any{"role": "system", "content": system})
-	}
-	convertedMessages = append(convertedMessages, messages...)
-
-	out := map[string]any{"model": dsModel, "messages": convertedMessages}
-	for _, k := range []string{"temperature", "top_p", "stream"} {
-		if v, ok := claudeReq[k]; ok {
-			out[k] = v
-		}
-	}
-	if stopSeq, ok := claudeReq["stop_sequences"]; ok {
-		out["stop"] = stopSeq
-	}
-	return out
+	return claudeconv.ConvertClaudeToDeepSeek(claudeReq, store, ClaudeDefaultModel)
 }
 
 // EstimateTokens provides a rough token count approximation.

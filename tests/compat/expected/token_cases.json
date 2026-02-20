@@ -1,0 +1,7 @@
+{
+  "cases": [
+    {"name": "ascii_short", "tokens": 1},
+    {"name": "cjk", "tokens": 3},
+    {"name": "mixed", "tokens": 4}
+  ]
+}

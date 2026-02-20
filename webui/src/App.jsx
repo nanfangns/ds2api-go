@@ -11,6 +11,7 @@ import {
     Key,
     Upload,
     Cloud,
+    Settings as SettingsIcon,
     LogOut,
     Menu,
     X,
@@ -23,12 +24,13 @@ import AccountManager from './components/AccountManager'
 import ApiTester from './components/ApiTester'
 import BatchImport from './components/BatchImport'
 import VercelSync from './components/VercelSync'
+import Settings from './components/Settings'
 import Login from './components/Login'
 import LandingPage from './components/LandingPage'
 import LanguageToggle from './components/LanguageToggle'
 import { useI18n } from './i18n'
 
-function Dashboard({ token, onLogout, config, fetchConfig, showMessage, message }) {
+function Dashboard({ token, onLogout, config, fetchConfig, showMessage, message, onForceLogout }) {
     const { t } = useI18n()
     const [activeTab, setActiveTab] = useState('accounts')
     const [sidebarOpen, setSidebarOpen] = useState(false)
@@ -39,6 +41,7 @@ function Dashboard({ token, onLogout, config, fetchConfig, showMessage, message 
         { id: 'test', label: t('nav.test.label'), icon: Server, description: t('nav.test.desc') },
         { id: 'import', label: t('nav.import.label'), icon: Upload, description: t('nav.import.desc') },
         { id: 'vercel', label: t('nav.vercel.label'), icon: Cloud, description: t('nav.vercel.desc') },
+        { id: 'settings', label: t('nav.settings.label'), icon: SettingsIcon, description: t('nav.settings.desc') },
     ]
 
     const authFetch = async (url, options = {}) => {
@@ -65,6 +68,8 @@ function Dashboard({ token, onLogout, config, fetchConfig, showMessage, message 
                 return <BatchImport onRefresh={fetchConfig} onMessage={showMessage} authFetch={authFetch} />
             case 'vercel':
                 return <VercelSync onMessage={showMessage} authFetch={authFetch} />
+            case 'settings':
+                return <Settings onRefresh={fetchConfig} onMessage={showMessage} authFetch={authFetch} onForceLogout={onForceLogout} />
             default:
                 return null
         }
@@ -314,6 +319,7 @@ export default function App() {
                         fetchConfig={fetchConfig}
                         showMessage={showMessage}
                         message={message}
+                        onForceLogout={handleLogout}
                     />
                 ) : (
                     <div className="min-h-screen flex flex-col bg-background relative overflow-hidden">

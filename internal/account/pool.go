@@ -20,13 +20,18 @@ type Pool struct {
 	maxInflightPerAccount  int
 	recommendedConcurrency int
 	maxQueueSize           int
+	globalMaxInflight      int
 }
 
 func NewPool(store *config.Store) *Pool {
+	maxPer := 2
+	if store != nil {
+		maxPer = store.RuntimeAccountMaxInflight()
+	}
 	p := &Pool{
 		store:                 store,
 		inUse:                 map[string]int{},
-		maxInflightPerAccount: maxInflightFromEnv(),
+		maxInflightPerAccount: maxPer,
 	}
 	p.Reset()
 	return p
@@ -49,8 +54,18 @@ func (p *Pool) Reset() {
 			ids = append(ids, id)
 		}
 	}
+	if p.store != nil {
+		p.maxInflightPerAccount = p.store.RuntimeAccountMaxInflight()
+	} else {
+		p.maxInflightPerAccount = maxInflightFromEnv()
+	}
 	recommended := defaultRecommendedConcurrency(len(ids), p.maxInflightPerAccount)
 	queueLimit := maxQueueFromEnv(recommended)
+	globalLimit := recommended
+	if p.store != nil {
+		queueLimit = p.store.RuntimeAccountMaxQueue(recommended)
+		globalLimit = p.store.RuntimeGlobalMaxInflight(recommended)
+	}
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	p.drainWaitersLocked()
@@ -58,10 +73,12 @@ func (p *Pool) Reset() {
 	p.inUse = map[string]int{}
 	p.recommendedConcurrency = recommended
 	p.maxQueueSize = queueLimit
+	p.globalMaxInflight = globalLimit
 	config.Logger.Info(
 		"[init_account_queue] initialized",
 		"total", len(ids),
 		"max_inflight_per_account", p.maxInflightPerAccount,
+		"global_max_inflight", p.globalMaxInflight,
 		"recommended_concurrency", p.recommendedConcurrency,
 		"max_queue_size", p.maxQueueSize,
 	)
@@ -109,7 +126,7 @@ func (p *Pool) AcquireWait(ctx context.Context, target string, exclude map[strin
 
 func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Account, bool) {
 	if target != "" {
-		if exclude[target] || p.inUse[target] >= p.maxInflightPerAccount {
+		if exclude[target] || !p.canAcquireIDLocked(target) {
 			return config.Account{}, false
 		}
 		acc, ok := p.store.FindAccount(target)
@@ -133,7 +150,7 @@ func (p *Pool) acquireLocked(target string, exclude map[string]bool) (config.Acc
 func (p *Pool) tryAcquire(exclude map[string]bool, requireToken bool) (config.Account, bool) {
 	for i := 0; i < len(p.queue); i++ {
 		id := p.queue[i]
-		if exclude[id] || p.inUse[id] >= p.maxInflightPerAccount {
+		if exclude[id] || !p.canAcquireIDLocked(id) {
 			continue
 		}
 		acc, ok := p.store.FindAccount(id)
@@ -205,10 +222,33 @@ func (p *Pool) Status() map[string]any {
 		"available_accounts":       available,
 		"in_use_accounts":          inUseAccounts,
 		"max_inflight_per_account": p.maxInflightPerAccount,
+		"global_max_inflight":      p.globalMaxInflight,
 		"recommended_concurrency":  p.recommendedConcurrency,
 		"waiting":                  len(p.waiters),
 		"max_queue_size":           p.maxQueueSize,
 	}
+}
+
+func (p *Pool) ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight int) {
+	if maxInflightPerAccount <= 0 {
+		maxInflightPerAccount = 1
+	}
+	if maxQueueSize < 0 {
+		maxQueueSize = 0
+	}
+	if globalMaxInflight <= 0 {
+		globalMaxInflight = maxInflightPerAccount * len(p.store.Accounts())
+		if globalMaxInflight <= 0 {
+			globalMaxInflight = maxInflightPerAccount
+		}
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	p.maxInflightPerAccount = maxInflightPerAccount
+	p.maxQueueSize = maxQueueSize
+	p.globalMaxInflight = globalMaxInflight
+	p.recommendedConcurrency = defaultRecommendedConcurrency(len(p.queue), p.maxInflightPerAccount)
+	p.notifyWaiterLocked()
 }
 
 func maxInflightFromEnv() int {
@@ -299,4 +339,25 @@ func maxQueueFromEnv(defaultSize int) int {
 		return 0
 	}
 	return defaultSize
+}
+
+func (p *Pool) canAcquireIDLocked(accountID string) bool {
+	if accountID == "" {
+		return false
+	}
+	if p.inUse[accountID] >= p.maxInflightPerAccount {
+		return false
+	}
+	if p.globalMaxInflight > 0 && p.currentInUseLocked() >= p.globalMaxInflight {
+		return false
+	}
+	return true
+}
+
+func (p *Pool) currentInUseLocked() int {
+	total := 0
+	for _, n := range p.inUse {
+		total += n
+	}
+	return total
 }

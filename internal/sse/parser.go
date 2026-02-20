@@ -4,16 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"strings"
+
+	"ds2api/internal/deepseek"
 )
 
 type ContentPart struct {
 	Text string
 	Type string
-}
-
-var skipPatterns = []string{
-	"quasi_status", "elapsed_secs", "token_usage", "pending_fragment", "conversation_mode",
-	"fragments/-1/status", "fragments/-2/status", "fragments/-3/status",
 }
 
 func ParseDeepSeekSSELine(raw []byte) (map[string]any, bool, bool) {
@@ -33,10 +30,10 @@ func ParseDeepSeekSSELine(raw []byte) (map[string]any, bool, bool) {
 }
 
 func shouldSkipPath(path string) bool {
-	if path == "response/search_status" {
+	if _, ok := deepseek.SkipExactPathSet[path]; ok {
 		return true
 	}
-	for _, p := range skipPatterns {
+	for _, p := range deepseek.SkipContainsPatterns {
 		if strings.Contains(path, p) {
 			return true
 		}
@@ -60,126 +57,159 @@ func ParseSSEChunkForContent(chunk map[string]any, thinkingEnabled bool, current
 	}
 	newType := currentFragmentType
 	parts := make([]ContentPart, 0, 8)
+	collectDirectFragments(path, chunk, v, &newType, &parts)
+	updateTypeFromNestedResponse(path, v, &newType)
+	partType := resolvePartType(path, thinkingEnabled, newType)
+	finished := appendChunkValueContent(v, partType, &newType, &parts, path)
+	if finished {
+		return nil, true, newType
+	}
+	return parts, false, newType
+}
 
-	// Newer DeepSeek responses may emit fragment APPEND directly on
-	// path "response/fragments" instead of wrapping it in path "response".
-	if path == "response/fragments" {
-		if op, _ := chunk["o"].(string); strings.EqualFold(op, "APPEND") {
-			if frags, ok := v.([]any); ok {
-				for _, frag := range frags {
-					fm, ok := frag.(map[string]any)
-					if !ok {
-						continue
-					}
-					t, _ := fm["type"].(string)
-					content, _ := fm["content"].(string)
-					t = strings.ToUpper(t)
-					switch t {
-					case "THINK", "THINKING":
-						newType = "thinking"
-						if content != "" {
-							parts = append(parts, ContentPart{Text: content, Type: "thinking"})
-						}
-					case "RESPONSE":
-						newType = "text"
-						if content != "" {
-							parts = append(parts, ContentPart{Text: content, Type: "text"})
-						}
-					default:
-						if content != "" {
-							parts = append(parts, ContentPart{Text: content, Type: "text"})
-						}
-					}
-				}
+func collectDirectFragments(path string, chunk map[string]any, v any, newType *string, parts *[]ContentPart) {
+	if path != "response/fragments" {
+		return
+	}
+	op, _ := chunk["o"].(string)
+	if !strings.EqualFold(op, "APPEND") {
+		return
+	}
+	frags, ok := v.([]any)
+	if !ok {
+		return
+	}
+	for _, frag := range frags {
+		m, ok := frag.(map[string]any)
+		if !ok {
+			continue
+		}
+		typeName, content, fragType := parseFragmentTypeContent(m)
+		if typeName == "" {
+			typeName = fragType
+		}
+		switch typeName {
+		case "THINK", "THINKING":
+			*newType = "thinking"
+			appendContentPart(parts, content, "thinking")
+		case "RESPONSE":
+			*newType = "text"
+			appendContentPart(parts, content, "text")
+		default:
+			appendContentPart(parts, content, "text")
+		}
+	}
+}
+
+func updateTypeFromNestedResponse(path string, v any, newType *string) {
+	if path != "response" {
+		return
+	}
+	arr, ok := v.([]any)
+	if !ok {
+		return
+	}
+	for _, it := range arr {
+		m, ok := it.(map[string]any)
+		if !ok || m["p"] != "fragments" || m["o"] != "APPEND" {
+			continue
+		}
+		frags, ok := m["v"].([]any)
+		if !ok {
+			continue
+		}
+		for _, frag := range frags {
+			fm, ok := frag.(map[string]any)
+			if !ok {
+				continue
+			}
+			typeName, _, _ := parseFragmentTypeContent(fm)
+			switch typeName {
+			case "THINK", "THINKING":
+				*newType = "thinking"
+			case "RESPONSE":
+				*newType = "text"
 			}
 		}
 	}
+}
 
-	if path == "response" {
-		if arr, ok := v.([]any); ok {
-			for _, it := range arr {
-				m, ok := it.(map[string]any)
-				if !ok {
-					continue
-				}
-				if m["p"] == "fragments" && m["o"] == "APPEND" {
-					if frags, ok := m["v"].([]any); ok {
-						for _, frag := range frags {
-							fm, ok := frag.(map[string]any)
-							if !ok {
-								continue
-							}
-							t, _ := fm["type"].(string)
-							t = strings.ToUpper(t)
-							if t == "THINK" || t == "THINKING" {
-								newType = "thinking"
-							} else if t == "RESPONSE" {
-								newType = "text"
-							}
-						}
-					}
-				}
-			}
-		}
-	}
-	partType := "text"
+func resolvePartType(path string, thinkingEnabled bool, newType string) string {
 	switch {
 	case path == "response/thinking_content":
-		partType = "thinking"
+		return "thinking"
 	case path == "response/content":
-		partType = "text"
+		return "text"
 	case strings.Contains(path, "response/fragments") && strings.Contains(path, "/content"):
-		partType = newType
-	case path == "":
-		if thinkingEnabled {
-			partType = newType
-		}
+		return newType
+	case path == "" && thinkingEnabled:
+		return newType
+	default:
+		return "text"
 	}
+}
+
+func appendChunkValueContent(v any, partType string, newType *string, parts *[]ContentPart, path string) bool {
 	switch val := v.(type) {
 	case string:
 		if val == "FINISHED" && (path == "" || path == "status") {
-			return nil, true, newType
+			return true
 		}
-		if val != "" {
-			parts = append(parts, ContentPart{Text: val, Type: partType})
-		}
+		appendContentPart(parts, val, partType)
 	case []any:
 		pp, finished := extractContentRecursive(val, partType)
 		if finished {
-			return nil, true, newType
+			return true
 		}
-		parts = append(parts, pp...)
+		*parts = append(*parts, pp...)
 	case map[string]any:
-		resp := val
-		if wrapped, ok := val["response"].(map[string]any); ok {
-			resp = wrapped
+		appendWrappedFragments(val, partType, newType, parts)
+	}
+	return false
+}
+
+func appendWrappedFragments(val map[string]any, partType string, newType *string, parts *[]ContentPart) {
+	resp := val
+	if wrapped, ok := val["response"].(map[string]any); ok {
+		resp = wrapped
+	}
+	frags, ok := resp["fragments"].([]any)
+	if !ok {
+		return
+	}
+	for _, item := range frags {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
 		}
-		if frags, ok := resp["fragments"].([]any); ok {
-			for _, item := range frags {
-				m, ok := item.(map[string]any)
-				if !ok {
-					continue
-				}
-				t, _ := m["type"].(string)
-				content, _ := m["content"].(string)
-				t = strings.ToUpper(t)
-				if t == "THINK" || t == "THINKING" {
-					newType = "thinking"
-					if content != "" {
-						parts = append(parts, ContentPart{Text: content, Type: "thinking"})
-					}
-				} else if t == "RESPONSE" {
-					newType = "text"
-					if content != "" {
-						parts = append(parts, ContentPart{Text: content, Type: "text"})
-					}
-				} else if content != "" {
-					parts = append(parts, ContentPart{Text: content, Type: partType})
-				}
-			}
+		typeName, content, fragType := parseFragmentTypeContent(m)
+		if typeName == "" {
+			typeName = fragType
+		}
+		switch typeName {
+		case "THINK", "THINKING":
+			*newType = "thinking"
+			appendContentPart(parts, content, "thinking")
+		case "RESPONSE":
+			*newType = "text"
+			appendContentPart(parts, content, "text")
+		default:
+			appendContentPart(parts, content, partType)
 		}
 	}
-	return parts, false, newType
+}
+
+func parseFragmentTypeContent(m map[string]any) (string, string, string) {
+	typeName, _ := m["type"].(string)
+	content, _ := m["content"].(string)
+	return strings.ToUpper(typeName), content, strings.ToUpper(typeName)
+}
+
+func appendContentPart(parts *[]ContentPart, content, kind string) {
+	if content == "" {
+		return
+	}
+	*parts = append(*parts, ContentPart{Text: content, Type: kind})
 }
 
 func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bool) {

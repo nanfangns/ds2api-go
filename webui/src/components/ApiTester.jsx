@@ -42,6 +42,10 @@ export default function ApiTester({ config, onMessage, authFetch }) {
 
     const apiFetch = authFetch || fetch
     const accounts = config.accounts || []
+    const resolveAccountIdentifier = (acc) => {
+        if (!acc || typeof acc !== 'object') return ''
+        return String(acc.identifier || acc.email || acc.mobile || '').trim()
+    }
     const configuredKeys = config.keys || []
     const trimmedApiKey = apiKey.trim()
     const defaultKey = configuredKeys[0] || ''
@@ -297,11 +301,15 @@ return (
                                 onChange={e => setSelectedAccount(e.target.value)}
                             >
                                 <option value="" className="bg-popover text-popover-foreground">{t('apiTester.autoRandom')}</option>
-                                {accounts.map((acc, i) => (
-                                    <option key={i} value={acc.email || acc.mobile} className="bg-popover text-popover-foreground">
-                                        👤 {acc.email || acc.mobile}
-                                    </option>
-                                ))}
+                                {accounts.map((acc, i) => {
+                                    const id = resolveAccountIdentifier(acc)
+                                    if (!id) return null
+                                    return (
+                                        <option key={i} value={id} className="bg-popover text-popover-foreground">
+                                            👤 {id}
+                                        </option>
+                                    )
+                                })}
                             </select>
                             <ChevronDown className="absolute right-2.5 top-3 w-4 h-4 text-muted-foreground pointer-events-none" />
                         </div>

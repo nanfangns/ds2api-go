@@ -327,7 +327,7 @@ func (r *Runner) runPreflight(ctx context.Context) error {
 		{"go", "test", "./...", "-count=1"},
 		{"node", "--check", "api/chat-stream.js"},
 		{"node", "--check", "api/helpers/stream-tool-sieve.js"},
-		{"node", "--test", "api/helpers/stream-tool-sieve.test.js", "api/chat-stream.test.js"},
+		{"node", "--test", "api/helpers/stream-tool-sieve.test.js", "api/chat-stream.test.js", "api/compat/js_compat_test.js"},
 		{"npm", "run", "build", "--prefix", "webui"},
 	}
 	f, err := os.OpenFile(r.preflightLog, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
@@ -755,11 +755,15 @@ func (r *Runner) cases() []caseDef {
 		{ID: "healthz_ok", Run: r.caseHealthz},
 		{ID: "readyz_ok", Run: r.caseReadyz},
 		{ID: "models_openai", Run: r.caseModelsOpenAI},
+		{ID: "model_openai_by_id", Run: r.caseModelOpenAIByID},
 		{ID: "models_claude", Run: r.caseModelsClaude},
 		{ID: "admin_login_verify", Run: r.caseAdminLoginVerify},
 		{ID: "admin_queue_status", Run: r.caseAdminQueueStatus},
 		{ID: "chat_nonstream_basic", Run: r.caseChatNonstream},
 		{ID: "chat_stream_basic", Run: r.caseChatStream},
+		{ID: "responses_nonstream_basic", Run: r.caseResponsesNonstream},
+		{ID: "responses_stream_basic", Run: r.caseResponsesStream},
+		{ID: "embeddings_contract", Run: r.caseEmbeddings},
 		{ID: "reasoner_stream", Run: r.caseReasonerStream},
 		{ID: "toolcall_nonstream", Run: r.caseToolcallNonstream},
 		{ID: "toolcall_stream", Run: r.caseToolcallStream},
@@ -814,6 +818,19 @@ func (r *Runner) caseModelsOpenAI(ctx context.Context, cc *caseContext) error {
 	ids := extractModelIDs(resp.Body)
 	cc.assert("has_deepseek_chat", contains(ids, "deepseek-chat"), strings.Join(ids, ","))
 	cc.assert("has_deepseek_reasoner", contains(ids, "deepseek-reasoner"), strings.Join(ids, ","))
+	return nil
+}
+
+func (r *Runner) caseModelOpenAIByID(ctx context.Context, cc *caseContext) error {
+	resp, err := cc.request(ctx, requestSpec{Method: http.MethodGet, Path: "/v1/models/gpt-4o", Retryable: true})
+	if err != nil {
+		return err
+	}
+	cc.assert("status_200", resp.StatusCode == http.StatusOK, fmt.Sprintf("status=%d", resp.StatusCode))
+	var m map[string]any
+	_ = json.Unmarshal(resp.Body, &m)
+	cc.assert("object_model", asString(m["object"]) == "model", fmt.Sprintf("body=%s", string(resp.Body)))
+	cc.assert("id_deepseek_chat", asString(m["id"]) == "deepseek-chat", fmt.Sprintf("body=%s", string(resp.Body)))
 	return nil
 }
 
@@ -939,6 +956,115 @@ func (r *Runner) caseChatStream(ctx context.Context, cc *caseContext) error {
 	frames, done := parseSSEFrames(resp.Body)
 	cc.assert("frames_non_empty", len(frames) > 0, fmt.Sprintf("len=%d", len(frames)))
 	cc.assert("done_terminated", done, "expected [DONE]")
+	return nil
+}
+
+func (r *Runner) caseResponsesNonstream(ctx context.Context, cc *caseContext) error {
+	resp, err := cc.request(ctx, requestSpec{
+		Method: http.MethodPost,
+		Path:   "/v1/responses",
+		Headers: map[string]string{
+			"Authorization": "Bearer " + r.apiKey,
+		},
+		Body: map[string]any{
+			"model": "gpt-4o",
+			"input": "请简要回答 hello",
+		},
+		Retryable: true,
+	})
+	if err != nil {
+		return err
+	}
+	cc.assert("status_200", resp.StatusCode == http.StatusOK, fmt.Sprintf("status=%d", resp.StatusCode))
+	var m map[string]any
+	_ = json.Unmarshal(resp.Body, &m)
+	cc.assert("object_response", asString(m["object"]) == "response", fmt.Sprintf("body=%s", string(resp.Body)))
+	responseID := asString(m["id"])
+	cc.assert("response_id_present", responseID != "", fmt.Sprintf("body=%s", string(resp.Body)))
+	if responseID != "" {
+		getResp, getErr := cc.request(ctx, requestSpec{
+			Method: http.MethodGet,
+			Path:   "/v1/responses/" + responseID,
+			Headers: map[string]string{
+				"Authorization": "Bearer " + r.apiKey,
+			},
+			Retryable: true,
+		})
+		if getErr != nil {
+			return getErr
+		}
+		cc.assert("get_status_200", getResp.StatusCode == http.StatusOK, fmt.Sprintf("status=%d", getResp.StatusCode))
+	}
+	return nil
+}
+
+func (r *Runner) caseResponsesStream(ctx context.Context, cc *caseContext) error {
+	resp, err := cc.request(ctx, requestSpec{
+		Method: http.MethodPost,
+		Path:   "/v1/responses",
+		Headers: map[string]string{
+			"Authorization": "Bearer " + r.apiKey,
+		},
+		Body: map[string]any{
+			"model":  "gpt-4o",
+			"input":  "请流式回答 hello",
+			"stream": true,
+		},
+		Stream:    true,
+		Retryable: true,
+	})
+	if err != nil {
+		return err
+	}
+	cc.assert("status_200", resp.StatusCode == http.StatusOK, fmt.Sprintf("status=%d", resp.StatusCode))
+	frames, done := parseSSEFrames(resp.Body)
+	cc.assert("frames_non_empty", len(frames) > 0, fmt.Sprintf("len=%d", len(frames)))
+	hasCreated := false
+	hasCompleted := false
+	for _, f := range frames {
+		switch asString(f["type"]) {
+		case "response.created":
+			hasCreated = true
+		case "response.completed":
+			hasCompleted = true
+		}
+	}
+	cc.assert("has_response_created", hasCreated, fmt.Sprintf("body=%s", string(resp.Body)))
+	cc.assert("has_response_completed", hasCompleted, fmt.Sprintf("body=%s", string(resp.Body)))
+	cc.assert("done_terminated", done, "expected [DONE]")
+	return nil
+}
+
+func (r *Runner) caseEmbeddings(ctx context.Context, cc *caseContext) error {
+	resp, err := cc.request(ctx, requestSpec{
+		Method: http.MethodPost,
+		Path:   "/v1/embeddings",
+		Headers: map[string]string{
+			"Authorization": "Bearer " + r.apiKey,
+		},
+		Body: map[string]any{
+			"model": "gpt-4o",
+			"input": []string{"hello", "world"},
+		},
+		Retryable: true,
+	})
+	if err != nil {
+		return err
+	}
+	cc.assert("status_200_or_501", resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusNotImplemented, fmt.Sprintf("status=%d", resp.StatusCode))
+	var m map[string]any
+	_ = json.Unmarshal(resp.Body, &m)
+	if resp.StatusCode == http.StatusOK {
+		cc.assert("object_list", asString(m["object"]) == "list", fmt.Sprintf("body=%s", string(resp.Body)))
+		data, _ := m["data"].([]any)
+		cc.assert("data_non_empty", len(data) > 0, fmt.Sprintf("body=%s", string(resp.Body)))
+		return nil
+	}
+	errObj, _ := m["error"].(map[string]any)
+	_, hasCode := errObj["code"]
+	_, hasParam := errObj["param"]
+	cc.assert("error_has_code", hasCode, fmt.Sprintf("body=%s", string(resp.Body)))
+	cc.assert("error_has_param", hasParam, fmt.Sprintf("body=%s", string(resp.Body)))
 	return nil
 }
 

@@ -2,6 +2,8 @@ package auth
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"net/http"
 	"strings"
@@ -22,6 +24,7 @@ var (
 type RequestAuth struct {
 	UseConfigToken bool
 	DeepSeekToken  string
+	CallerID       string
 	AccountID      string
 	Account        config.Account
 	TriedAccounts  map[string]bool
@@ -45,9 +48,16 @@ func (r *Resolver) Determine(req *http.Request) (*RequestAuth, error) {
 	if callerKey == "" {
 		return nil, ErrUnauthorized
 	}
+	callerID := callerTokenID(callerKey)
 	ctx := req.Context()
 	if !r.Store.HasAPIKey(callerKey) {
-		return &RequestAuth{UseConfigToken: false, DeepSeekToken: callerKey, resolver: r, TriedAccounts: map[string]bool{}}, nil
+		return &RequestAuth{
+			UseConfigToken: false,
+			DeepSeekToken:  callerKey,
+			CallerID:       callerID,
+			resolver:       r,
+			TriedAccounts:  map[string]bool{},
+		}, nil
 	}
 	target := strings.TrimSpace(req.Header.Get("X-Ds2-Target-Account"))
 	acc, ok := r.Pool.AcquireWait(ctx, target, nil)
@@ -56,6 +66,7 @@ func (r *Resolver) Determine(req *http.Request) (*RequestAuth, error) {
 	}
 	a := &RequestAuth{
 		UseConfigToken: true,
+		CallerID:       callerID,
 		AccountID:      acc.Identifier(),
 		Account:        acc,
 		TriedAccounts:  map[string]bool{},
@@ -68,6 +79,26 @@ func (r *Resolver) Determine(req *http.Request) (*RequestAuth, error) {
 		}
 	} else {
 		a.DeepSeekToken = acc.Token
+	}
+	return a, nil
+}
+
+// DetermineCaller resolves caller identity without acquiring any pooled account.
+// Use this for local-cache lookup routes that only need tenant isolation.
+func (r *Resolver) DetermineCaller(req *http.Request) (*RequestAuth, error) {
+	callerKey := extractCallerToken(req)
+	if callerKey == "" {
+		return nil, ErrUnauthorized
+	}
+	callerID := callerTokenID(callerKey)
+	a := &RequestAuth{
+		UseConfigToken: false,
+		CallerID:       callerID,
+		resolver:       r,
+		TriedAccounts:  map[string]bool{},
+	}
+	if r == nil || r.Store == nil || !r.Store.HasAPIKey(callerKey) {
+		a.DeepSeekToken = callerKey
 	}
 	return a, nil
 }
@@ -157,4 +188,13 @@ func extractCallerToken(req *http.Request) string {
 		}
 	}
 	return strings.TrimSpace(req.Header.Get("x-api-key"))
+}
+
+func callerTokenID(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(token))
+	return "caller:" + hex.EncodeToString(sum[:8])
 }

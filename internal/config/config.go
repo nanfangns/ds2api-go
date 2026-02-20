@@ -6,10 +6,12 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -61,9 +63,45 @@ type Config struct {
 	Accounts         []Account         `json:"accounts,omitempty"`
 	ClaudeMapping    map[string]string `json:"claude_mapping,omitempty"`
 	ClaudeModelMap   map[string]string `json:"claude_model_mapping,omitempty"`
+	ModelAliases     map[string]string `json:"model_aliases,omitempty"`
+	Admin            AdminConfig       `json:"admin,omitempty"`
+	Runtime          RuntimeConfig     `json:"runtime,omitempty"`
+	Compat           CompatConfig      `json:"compat,omitempty"`
+	Toolcall         ToolcallConfig    `json:"toolcall,omitempty"`
+	Responses        ResponsesConfig   `json:"responses,omitempty"`
+	Embeddings       EmbeddingsConfig  `json:"embeddings,omitempty"`
 	VercelSyncHash   string            `json:"_vercel_sync_hash,omitempty"`
 	VercelSyncTime   int64             `json:"_vercel_sync_time,omitempty"`
 	AdditionalFields map[string]any    `json:"-"`
+}
+
+type CompatConfig struct {
+	WideInputStrictOutput *bool `json:"wide_input_strict_output,omitempty"`
+}
+
+type AdminConfig struct {
+	PasswordHash      string `json:"password_hash,omitempty"`
+	JWTExpireHours    int    `json:"jwt_expire_hours,omitempty"`
+	JWTValidAfterUnix int64  `json:"jwt_valid_after_unix,omitempty"`
+}
+
+type RuntimeConfig struct {
+	AccountMaxInflight int `json:"account_max_inflight,omitempty"`
+	AccountMaxQueue    int `json:"account_max_queue,omitempty"`
+	GlobalMaxInflight  int `json:"global_max_inflight,omitempty"`
+}
+
+type ToolcallConfig struct {
+	Mode                string `json:"mode,omitempty"`
+	EarlyEmitConfidence string `json:"early_emit_confidence,omitempty"`
+}
+
+type ResponsesConfig struct {
+	StoreTTLSeconds int `json:"store_ttl_seconds,omitempty"`
+}
+
+type EmbeddingsConfig struct {
+	Provider string `json:"provider,omitempty"`
 }
 
 func (c Config) MarshalJSON() ([]byte, error) {
@@ -83,6 +121,27 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if len(c.ClaudeModelMap) > 0 {
 		m["claude_model_mapping"] = c.ClaudeModelMap
 	}
+	if len(c.ModelAliases) > 0 {
+		m["model_aliases"] = c.ModelAliases
+	}
+	if strings.TrimSpace(c.Admin.PasswordHash) != "" || c.Admin.JWTExpireHours > 0 || c.Admin.JWTValidAfterUnix > 0 {
+		m["admin"] = c.Admin
+	}
+	if c.Runtime.AccountMaxInflight > 0 || c.Runtime.AccountMaxQueue > 0 || c.Runtime.GlobalMaxInflight > 0 {
+		m["runtime"] = c.Runtime
+	}
+	if c.Compat.WideInputStrictOutput != nil {
+		m["compat"] = c.Compat
+	}
+	if strings.TrimSpace(c.Toolcall.Mode) != "" || strings.TrimSpace(c.Toolcall.EarlyEmitConfidence) != "" {
+		m["toolcall"] = c.Toolcall
+	}
+	if c.Responses.StoreTTLSeconds > 0 {
+		m["responses"] = c.Responses
+	}
+	if strings.TrimSpace(c.Embeddings.Provider) != "" {
+		m["embeddings"] = c.Embeddings
+	}
 	if c.VercelSyncHash != "" {
 		m["_vercel_sync_hash"] = c.VercelSyncHash
 	}
@@ -101,17 +160,57 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 	for k, v := range raw {
 		switch k {
 		case "keys":
-			_ = json.Unmarshal(v, &c.Keys)
+			if err := json.Unmarshal(v, &c.Keys); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "accounts":
-			_ = json.Unmarshal(v, &c.Accounts)
+			if err := json.Unmarshal(v, &c.Accounts); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "claude_mapping":
-			_ = json.Unmarshal(v, &c.ClaudeMapping)
+			if err := json.Unmarshal(v, &c.ClaudeMapping); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "claude_model_mapping":
-			_ = json.Unmarshal(v, &c.ClaudeModelMap)
+			if err := json.Unmarshal(v, &c.ClaudeModelMap); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "model_aliases":
+			if err := json.Unmarshal(v, &c.ModelAliases); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "admin":
+			if err := json.Unmarshal(v, &c.Admin); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "runtime":
+			if err := json.Unmarshal(v, &c.Runtime); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "compat":
+			if err := json.Unmarshal(v, &c.Compat); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "toolcall":
+			if err := json.Unmarshal(v, &c.Toolcall); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "responses":
+			if err := json.Unmarshal(v, &c.Responses); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
+		case "embeddings":
+			if err := json.Unmarshal(v, &c.Embeddings); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "_vercel_sync_hash":
-			_ = json.Unmarshal(v, &c.VercelSyncHash)
+			if err := json.Unmarshal(v, &c.VercelSyncHash); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "_vercel_sync_time":
-			_ = json.Unmarshal(v, &c.VercelSyncTime)
+			if err := json.Unmarshal(v, &c.VercelSyncTime); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		default:
 			var anyVal any
 			if err := json.Unmarshal(v, &anyVal); err == nil {
@@ -124,10 +223,19 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 
 func (c Config) Clone() Config {
 	clone := Config{
-		Keys:             slices.Clone(c.Keys),
-		Accounts:         slices.Clone(c.Accounts),
-		ClaudeMapping:    cloneStringMap(c.ClaudeMapping),
-		ClaudeModelMap:   cloneStringMap(c.ClaudeModelMap),
+		Keys:           slices.Clone(c.Keys),
+		Accounts:       slices.Clone(c.Accounts),
+		ClaudeMapping:  cloneStringMap(c.ClaudeMapping),
+		ClaudeModelMap: cloneStringMap(c.ClaudeModelMap),
+		ModelAliases:   cloneStringMap(c.ModelAliases),
+		Admin:          c.Admin,
+		Runtime:        c.Runtime,
+		Compat: CompatConfig{
+			WideInputStrictOutput: cloneBoolPtr(c.Compat.WideInputStrictOutput),
+		},
+		Toolcall:         c.Toolcall,
+		Responses:        c.Responses,
+		Embeddings:       c.Embeddings,
 		VercelSyncHash:   c.VercelSyncHash,
 		VercelSyncTime:   c.VercelSyncTime,
 		AdditionalFields: map[string]any{},
@@ -147,6 +255,14 @@ func cloneStringMap(in map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+func cloneBoolPtr(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	v := *in
+	return &v
 }
 
 type Store struct {
@@ -233,28 +349,92 @@ func loadConfig() (Config, bool, error) {
 
 	content, err := os.ReadFile(ConfigPath())
 	if err != nil {
+		if IsVercel() {
+			// Vercel one-click deploy may start without a writable/present config file.
+			// Keep an in-memory config so users can bootstrap via WebUI then sync env.
+			return Config{}, true, nil
+		}
 		return Config{}, false, err
 	}
 	var cfg Config
 	if err := json.Unmarshal(content, &cfg); err != nil {
 		return Config{}, false, err
 	}
+	if IsVercel() {
+		// Vercel filesystem is ephemeral/read-only for runtime writes; avoid save errors.
+		return cfg, true, nil
+	}
 	return cfg, false, nil
 }
 
 func parseConfigString(raw string) (Config, error) {
 	var cfg Config
-	if err := json.Unmarshal([]byte(raw), &cfg); err == nil {
-		return cfg, nil
+	candidates := []string{raw}
+	if normalized := normalizeConfigInput(raw); normalized != raw {
+		candidates = append(candidates, normalized)
 	}
-	decoded, err := base64.StdEncoding.DecodeString(raw)
+	for _, candidate := range candidates {
+		if err := json.Unmarshal([]byte(candidate), &cfg); err == nil {
+			return cfg, nil
+		}
+	}
+
+	base64Input := candidates[len(candidates)-1]
+	decoded, err := decodeConfigBase64(base64Input)
 	if err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("invalid DS2API_CONFIG_JSON: %w", err)
 	}
 	if err := json.Unmarshal(decoded, &cfg); err != nil {
-		return Config{}, err
+		return Config{}, fmt.Errorf("invalid DS2API_CONFIG_JSON decoded JSON: %w", err)
 	}
 	return cfg, nil
+}
+
+func normalizeConfigInput(raw string) string {
+	normalized := strings.TrimSpace(raw)
+	if normalized == "" {
+		return normalized
+	}
+	for {
+		changed := false
+		if len(normalized) >= 2 {
+			first := normalized[0]
+			last := normalized[len(normalized)-1]
+			if (first == '"' && last == '"') || (first == '\'' && last == '\'') {
+				normalized = strings.TrimSpace(normalized[1 : len(normalized)-1])
+				changed = true
+			}
+		}
+		if strings.HasPrefix(strings.ToLower(normalized), "base64:") {
+			normalized = strings.TrimSpace(normalized[len("base64:"):])
+			changed = true
+		}
+		if !changed {
+			break
+		}
+	}
+	return strings.TrimSpace(normalized)
+}
+
+func decodeConfigBase64(raw string) ([]byte, error) {
+	encodings := []*base64.Encoding{
+		base64.StdEncoding,
+		base64.RawStdEncoding,
+		base64.URLEncoding,
+		base64.RawURLEncoding,
+	}
+	var lastErr error
+	for _, enc := range encodings {
+		decoded, err := enc.DecodeString(raw)
+		if err == nil {
+			return decoded, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("base64 decode failed")
 }
 
 func (s *Store) Snapshot() Config {
@@ -412,4 +592,152 @@ func (s *Store) ClaudeMapping() map[string]string {
 		return cloneStringMap(s.cfg.ClaudeMapping)
 	}
 	return map[string]string{"fast": "deepseek-chat", "slow": "deepseek-reasoner"}
+}
+
+func (s *Store) ModelAliases() map[string]string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	out := DefaultModelAliases()
+	for k, v := range s.cfg.ModelAliases {
+		key := strings.TrimSpace(lower(k))
+		val := strings.TrimSpace(lower(v))
+		if key == "" || val == "" {
+			continue
+		}
+		out[key] = val
+	}
+	return out
+}
+
+func (s *Store) CompatWideInputStrictOutput() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Compat.WideInputStrictOutput == nil {
+		return true
+	}
+	return *s.cfg.Compat.WideInputStrictOutput
+}
+
+func (s *Store) ToolcallMode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	mode := strings.TrimSpace(strings.ToLower(s.cfg.Toolcall.Mode))
+	if mode == "" {
+		return "feature_match"
+	}
+	return mode
+}
+
+func (s *Store) ToolcallEarlyEmitConfidence() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	level := strings.TrimSpace(strings.ToLower(s.cfg.Toolcall.EarlyEmitConfidence))
+	if level == "" {
+		return "high"
+	}
+	return level
+}
+
+func (s *Store) ResponsesStoreTTLSeconds() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Responses.StoreTTLSeconds > 0 {
+		return s.cfg.Responses.StoreTTLSeconds
+	}
+	return 900
+}
+
+func (s *Store) EmbeddingsProvider() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cfg.Embeddings.Provider)
+}
+
+func (s *Store) AdminPasswordHash() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return strings.TrimSpace(s.cfg.Admin.PasswordHash)
+}
+
+func (s *Store) AdminJWTExpireHours() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Admin.JWTExpireHours > 0 {
+		return s.cfg.Admin.JWTExpireHours
+	}
+	if raw := strings.TrimSpace(os.Getenv("DS2API_JWT_EXPIRE_HOURS")); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 {
+			return n
+		}
+	}
+	return 24
+}
+
+func (s *Store) AdminJWTValidAfterUnix() int64 {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.Admin.JWTValidAfterUnix
+}
+
+func (s *Store) RuntimeAccountMaxInflight() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.AccountMaxInflight > 0 {
+		return s.cfg.Runtime.AccountMaxInflight
+	}
+	for _, key := range []string{"DS2API_ACCOUNT_MAX_INFLIGHT", "DS2API_ACCOUNT_CONCURRENCY"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	return 2
+}
+
+func (s *Store) RuntimeAccountMaxQueue(defaultSize int) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.AccountMaxQueue > 0 {
+		return s.cfg.Runtime.AccountMaxQueue
+	}
+	for _, key := range []string{"DS2API_ACCOUNT_MAX_QUEUE", "DS2API_ACCOUNT_QUEUE_SIZE"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n >= 0 {
+			return n
+		}
+	}
+	if defaultSize < 0 {
+		return 0
+	}
+	return defaultSize
+}
+
+func (s *Store) RuntimeGlobalMaxInflight(defaultSize int) int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.Runtime.GlobalMaxInflight > 0 {
+		return s.cfg.Runtime.GlobalMaxInflight
+	}
+	for _, key := range []string{"DS2API_GLOBAL_MAX_INFLIGHT", "DS2API_MAX_INFLIGHT"} {
+		raw := strings.TrimSpace(os.Getenv(key))
+		if raw == "" {
+			continue
+		}
+		n, err := strconv.Atoi(raw)
+		if err == nil && n > 0 {
+			return n
+		}
+	}
+	if defaultSize < 0 {
+		return 0
+	}
+	return defaultSize
 }

@@ -81,3 +81,34 @@ func statusOr(v int, d int) int {
 	}
 	return v
 }
+
+func accountMatchesIdentifier(acc config.Account, identifier string) bool {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return false
+	}
+	if strings.TrimSpace(acc.Email) == id {
+		return true
+	}
+	if strings.TrimSpace(acc.Mobile) == id {
+		return true
+	}
+	return acc.Identifier() == id
+}
+
+func findAccountByIdentifier(store ConfigStore, identifier string) (config.Account, bool) {
+	id := strings.TrimSpace(identifier)
+	if id == "" {
+		return config.Account{}, false
+	}
+	if acc, ok := store.FindAccount(id); ok {
+		return acc, true
+	}
+	accounts := store.Snapshot().Accounts
+	for _, acc := range accounts {
+		if accountMatchesIdentifier(acc, id) {
+			return acc, true
+		}
+	}
+	return config.Account{}, false
+}

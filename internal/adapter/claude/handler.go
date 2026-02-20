@@ -13,7 +13,9 @@ import (
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 	"ds2api/internal/deepseek"
+	claudefmt "ds2api/internal/format/claude"
 	"ds2api/internal/sse"
+	streamengine "ds2api/internal/stream"
 	"ds2api/internal/util"
 )
 
@@ -21,9 +23,9 @@ import (
 var writeJSON = util.WriteJSON
 
 type Handler struct {
-	Store *config.Store
-	Auth  *auth.Resolver
-	DS    *deepseek.Client
+	Store ConfigReader
+	Auth  AuthResolver
+	DS    DeepSeekCaller
 }
 
 var (
@@ -43,6 +45,9 @@ func (h *Handler) ListModels(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
+	if strings.TrimSpace(r.Header.Get("anthropic-version")) == "" {
+		r.Header.Set("anthropic-version", "2023-06-01")
+	}
 	a, err := h.Auth.Determine(r)
 	if err != nil {
 		status := http.StatusUnauthorized
@@ -50,132 +55,79 @@ func (h *Handler) Messages(w http.ResponseWriter, r *http.Request) {
 		if err == auth.ErrNoAccount {
 			status = http.StatusTooManyRequests
 		}
-		writeJSON(w, status, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": detail}})
+		writeClaudeError(w, status, detail)
 		return
 	}
 	defer h.Auth.Release(a)
 
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "invalid json"}})
+		writeClaudeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
-	model, _ := req["model"].(string)
-	messagesRaw, _ := req["messages"].([]any)
-	if model == "" || len(messagesRaw) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": map[string]any{"type": "invalid_request_error", "message": "Request must include 'model' and 'messages'."}})
+	norm, err := normalizeClaudeRequest(h.Store, req)
+	if err != nil {
+		writeClaudeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-
-	normalized := normalizeClaudeMessages(messagesRaw)
-	payload := cloneMap(req)
-	payload["messages"] = normalized
-	toolsRequested, _ := req["tools"].([]any)
-	if len(toolsRequested) > 0 && !hasSystemMessage(normalized) {
-		payload["messages"] = append([]any{map[string]any{"role": "system", "content": buildClaudeToolPrompt(toolsRequested)}}, normalized...)
-	}
-
-	dsPayload := util.ConvertClaudeToDeepSeek(payload, h.Store)
-	dsModel, _ := dsPayload["model"].(string)
-	thinkingEnabled, searchEnabled, ok := config.GetModelConfig(dsModel)
-	if !ok {
-		thinkingEnabled = false
-		searchEnabled = false
-	}
-	finalPrompt := util.MessagesPrepare(toMessageMaps(dsPayload["messages"]))
+	stdReq := norm.Standard
 
 	sessionID, err := h.DS.CreateSession(r.Context(), a, 3)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "api_error", "message": "invalid token."}})
+		writeClaudeError(w, http.StatusUnauthorized, "invalid token.")
 		return
 	}
 	pow, err := h.DS.GetPow(r.Context(), a, 3)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": map[string]any{"type": "api_error", "message": "Failed to get PoW"}})
+		writeClaudeError(w, http.StatusUnauthorized, "Failed to get PoW")
 		return
 	}
-	requestPayload := map[string]any{
-		"chat_session_id":   sessionID,
-		"parent_message_id": nil,
-		"prompt":            finalPrompt,
-		"ref_file_ids":      []any{},
-		"thinking_enabled":  thinkingEnabled,
-		"search_enabled":    searchEnabled,
-	}
+	requestPayload := stdReq.CompletionPayload(sessionID)
 	resp, err := h.DS.CallCompletion(r.Context(), a, requestPayload, pow, 3)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": "Failed to get Claude response."}})
+		writeClaudeError(w, http.StatusInternalServerError, "Failed to get Claude response.")
 		return
 	}
 	if resp.StatusCode != http.StatusOK {
 		defer resp.Body.Close()
 		body, _ := io.ReadAll(resp.Body)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": string(body)}})
+		writeClaudeError(w, http.StatusInternalServerError, string(body))
 		return
 	}
 
-	toolNames := extractClaudeToolNames(toolsRequested)
-	if util.ToBool(req["stream"]) {
-		h.handleClaudeStreamRealtime(w, r, resp, model, normalized, thinkingEnabled, searchEnabled, toolNames)
+	if stdReq.Stream {
+		h.handleClaudeStreamRealtime(w, r, resp, stdReq.ResponseModel, norm.NormalizedMessages, stdReq.Thinking, stdReq.Search, stdReq.ToolNames)
 		return
 	}
-	result := sse.CollectStream(resp, thinkingEnabled, true)
-	fullText := result.Text
-	fullThinking := result.Thinking
-	detected := util.ParseToolCalls(fullText, toolNames)
-	content := make([]map[string]any, 0, 4)
-	if fullThinking != "" {
-		content = append(content, map[string]any{"type": "thinking", "thinking": fullThinking})
-	}
-	stopReason := "end_turn"
-	if len(detected) > 0 {
-		stopReason = "tool_use"
-		for i, tc := range detected {
-			content = append(content, map[string]any{
-				"type":  "tool_use",
-				"id":    fmt.Sprintf("toolu_%d_%d", time.Now().Unix(), i),
-				"name":  tc.Name,
-				"input": tc.Input,
-			})
-		}
-	} else {
-		if fullText == "" {
-			fullText = "抱歉，没有生成有效的响应内容。"
-		}
-		content = append(content, map[string]any{"type": "text", "text": fullText})
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"id":            fmt.Sprintf("msg_%d", time.Now().UnixNano()),
-		"type":          "message",
-		"role":          "assistant",
-		"model":         model,
-		"content":       content,
-		"stop_reason":   stopReason,
-		"stop_sequence": nil,
-		"usage": map[string]any{
-			"input_tokens":  util.EstimateTokens(fmt.Sprintf("%v", normalized)),
-			"output_tokens": util.EstimateTokens(fullThinking) + util.EstimateTokens(fullText),
-		},
-	})
+	result := sse.CollectStream(resp, stdReq.Thinking, true)
+	respBody := claudefmt.BuildMessageResponse(
+		fmt.Sprintf("msg_%d", time.Now().UnixNano()),
+		stdReq.ResponseModel,
+		norm.NormalizedMessages,
+		result.Thinking,
+		result.Text,
+		stdReq.ToolNames,
+	)
+	writeJSON(w, http.StatusOK, respBody)
 }
 
 func (h *Handler) CountTokens(w http.ResponseWriter, r *http.Request) {
 	a, err := h.Auth.Determine(r)
 	if err != nil {
-		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": err.Error()})
+		writeClaudeError(w, http.StatusUnauthorized, err.Error())
 		return
 	}
 	defer h.Auth.Release(a)
 
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid json"})
+		writeClaudeError(w, http.StatusBadRequest, "invalid json")
 		return
 	}
 	model, _ := req["model"].(string)
 	messages, _ := req["messages"].([]any)
 	if model == "" || len(messages) == 0 {
-		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "Request must include 'model' and 'messages'."})
+		writeClaudeError(w, http.StatusBadRequest, "Request must include 'model' and 'messages'.")
 		return
 	}
 	inputTokens := 0
@@ -206,7 +158,7 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": map[string]any{"type": "api_error", "message": string(body)}})
+		writeClaudeError(w, http.StatusInternalServerError, string(body))
 		return
 	}
 
@@ -219,277 +171,60 @@ func (h *Handler) handleClaudeStreamRealtime(w http.ResponseWriter, r *http.Requ
 	if !canFlush {
 		config.Logger.Warn("[claude_stream] response writer does not support flush; streaming may be buffered")
 	}
-	send := func(event string, v any) {
-		b, _ := json.Marshal(v)
-		_, _ = w.Write([]byte("event: "))
-		_, _ = w.Write([]byte(event))
-		_, _ = w.Write([]byte("\n"))
-		_, _ = w.Write([]byte("data: "))
-		_, _ = w.Write(b)
-		_, _ = w.Write([]byte("\n\n"))
-		if canFlush {
-			_ = rc.Flush()
-		}
-	}
-	sendError := func(message string) {
-		msg := strings.TrimSpace(message)
-		if msg == "" {
-			msg = "upstream stream error"
-		}
-		send("error", map[string]any{
-			"type": "error",
-			"error": map[string]any{
-				"type":    "api_error",
-				"message": msg,
-			},
-		})
-	}
 
-	messageID := fmt.Sprintf("msg_%d", time.Now().UnixNano())
-	inputTokens := util.EstimateTokens(fmt.Sprintf("%v", messages))
-	send("message_start", map[string]any{
-		"type": "message_start",
-		"message": map[string]any{
-			"id":            messageID,
-			"type":          "message",
-			"role":          "assistant",
-			"model":         model,
-			"content":       []any{},
-			"stop_reason":   nil,
-			"stop_sequence": nil,
-			"usage":         map[string]any{"input_tokens": inputTokens, "output_tokens": 0},
-		},
-	})
+	streamRuntime := newClaudeStreamRuntime(
+		w,
+		rc,
+		canFlush,
+		model,
+		messages,
+		thinkingEnabled,
+		searchEnabled,
+		toolNames,
+	)
+	streamRuntime.sendMessageStart()
 
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"
 	}
-	parsedLines, done := sse.StartParsedLinePump(r.Context(), resp.Body, thinkingEnabled, initialType)
-	bufferToolContent := len(toolNames) > 0
-	hasContent := false
-	lastContent := time.Now()
-	keepaliveCount := 0
+	streamengine.ConsumeSSE(streamengine.ConsumeConfig{
+		Context:             r.Context(),
+		Body:                resp.Body,
+		ThinkingEnabled:     thinkingEnabled,
+		InitialType:         initialType,
+		KeepAliveInterval:   claudeStreamPingInterval,
+		IdleTimeout:         claudeStreamIdleTimeout,
+		MaxKeepAliveNoInput: claudeStreamMaxKeepaliveCnt,
+	}, streamengine.ConsumeHooks{
+		OnKeepAlive: func() {
+			streamRuntime.sendPing()
+		},
+		OnParsed:   streamRuntime.onParsed,
+		OnFinalize: streamRuntime.onFinalize,
+	})
+}
 
-	thinking := strings.Builder{}
-	text := strings.Builder{}
-
-	nextBlockIndex := 0
-	thinkingBlockOpen := false
-	thinkingBlockIndex := -1
-	textBlockOpen := false
-	textBlockIndex := -1
-	ended := false
-
-	closeThinkingBlock := func() {
-		if !thinkingBlockOpen {
-			return
-		}
-		send("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": thinkingBlockIndex,
-		})
-		thinkingBlockOpen = false
-		thinkingBlockIndex = -1
+func writeClaudeError(w http.ResponseWriter, status int, message string) {
+	code := "invalid_request"
+	switch status {
+	case http.StatusUnauthorized:
+		code = "authentication_failed"
+	case http.StatusTooManyRequests:
+		code = "rate_limit_exceeded"
+	case http.StatusNotFound:
+		code = "not_found"
+	case http.StatusInternalServerError:
+		code = "internal_error"
 	}
-	closeTextBlock := func() {
-		if !textBlockOpen {
-			return
-		}
-		send("content_block_stop", map[string]any{
-			"type":  "content_block_stop",
-			"index": textBlockIndex,
-		})
-		textBlockOpen = false
-		textBlockIndex = -1
-	}
-
-	finalize := func(stopReason string) {
-		if ended {
-			return
-		}
-		ended = true
-
-		closeThinkingBlock()
-		closeTextBlock()
-
-		finalThinking := thinking.String()
-		finalText := text.String()
-
-		if bufferToolContent {
-			detected := util.ParseToolCalls(finalText, toolNames)
-			if len(detected) > 0 {
-				stopReason = "tool_use"
-				for i, tc := range detected {
-					idx := nextBlockIndex + i
-					send("content_block_start", map[string]any{
-						"type":  "content_block_start",
-						"index": idx,
-						"content_block": map[string]any{
-							"type":  "tool_use",
-							"id":    fmt.Sprintf("toolu_%d_%d", time.Now().Unix(), idx),
-							"name":  tc.Name,
-							"input": tc.Input,
-						},
-					})
-					send("content_block_stop", map[string]any{
-						"type":  "content_block_stop",
-						"index": idx,
-					})
-				}
-				nextBlockIndex += len(detected)
-			} else if finalText != "" {
-				idx := nextBlockIndex
-				nextBlockIndex++
-				send("content_block_start", map[string]any{
-					"type":  "content_block_start",
-					"index": idx,
-					"content_block": map[string]any{
-						"type": "text",
-						"text": "",
-					},
-				})
-				send("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": idx,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": finalText,
-					},
-				})
-				send("content_block_stop", map[string]any{
-					"type":  "content_block_stop",
-					"index": idx,
-				})
-			}
-		}
-
-		outputTokens := util.EstimateTokens(finalThinking) + util.EstimateTokens(finalText)
-		send("message_delta", map[string]any{
-			"type": "message_delta",
-			"delta": map[string]any{
-				"stop_reason":   stopReason,
-				"stop_sequence": nil,
-			},
-			"usage": map[string]any{
-				"output_tokens": outputTokens,
-			},
-		})
-		send("message_stop", map[string]any{"type": "message_stop"})
-	}
-
-	pingTicker := time.NewTicker(claudeStreamPingInterval)
-	defer pingTicker.Stop()
-
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-pingTicker.C:
-			if !hasContent {
-				keepaliveCount++
-				if keepaliveCount >= claudeStreamMaxKeepaliveCnt {
-					finalize("end_turn")
-					return
-				}
-			}
-			if hasContent && time.Since(lastContent) > claudeStreamIdleTimeout {
-				finalize("end_turn")
-				return
-			}
-			send("ping", map[string]any{"type": "ping"})
-		case parsed, ok := <-parsedLines:
-			if !ok {
-				if err := <-done; err != nil {
-					sendError(err.Error())
-					return
-				}
-				finalize("end_turn")
-				return
-			}
-			if !parsed.Parsed {
-				continue
-			}
-			if parsed.ErrorMessage != "" {
-				sendError(parsed.ErrorMessage)
-				return
-			}
-			if parsed.Stop {
-				finalize("end_turn")
-				return
-			}
-
-			for _, p := range parsed.Parts {
-				if p.Text == "" {
-					continue
-				}
-				if p.Type != "thinking" && searchEnabled && sse.IsCitation(p.Text) {
-					continue
-				}
-
-				hasContent = true
-				lastContent = time.Now()
-				keepaliveCount = 0
-
-				if p.Type == "thinking" {
-					if !thinkingEnabled {
-						continue
-					}
-					thinking.WriteString(p.Text)
-					closeTextBlock()
-					if !thinkingBlockOpen {
-						thinkingBlockIndex = nextBlockIndex
-						nextBlockIndex++
-						send("content_block_start", map[string]any{
-							"type":  "content_block_start",
-							"index": thinkingBlockIndex,
-							"content_block": map[string]any{
-								"type":     "thinking",
-								"thinking": "",
-							},
-						})
-						thinkingBlockOpen = true
-					}
-					send("content_block_delta", map[string]any{
-						"type":  "content_block_delta",
-						"index": thinkingBlockIndex,
-						"delta": map[string]any{
-							"type":     "thinking_delta",
-							"thinking": p.Text,
-						},
-					})
-					continue
-				}
-
-				text.WriteString(p.Text)
-				if bufferToolContent {
-					continue
-				}
-				closeThinkingBlock()
-				if !textBlockOpen {
-					textBlockIndex = nextBlockIndex
-					nextBlockIndex++
-					send("content_block_start", map[string]any{
-						"type":  "content_block_start",
-						"index": textBlockIndex,
-						"content_block": map[string]any{
-							"type": "text",
-							"text": "",
-						},
-					})
-					textBlockOpen = true
-				}
-				send("content_block_delta", map[string]any{
-					"type":  "content_block_delta",
-					"index": textBlockIndex,
-					"delta": map[string]any{
-						"type": "text_delta",
-						"text": p.Text,
-					},
-				})
-			}
-		}
-	}
+	writeJSON(w, status, map[string]any{
+		"error": map[string]any{
+			"type":    "invalid_request_error",
+			"message": message,
+			"code":    code,
+			"param":   nil,
+		},
+	})
 }
 
 func normalizeClaudeMessages(messages []any) []any {

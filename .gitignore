@@ -81,6 +81,9 @@ ds2api-tests
 htmlcov/
 .pytest_cache/
 .tox/
+*.coverprofile
+coverage*.out
+cover/
 
 # Misc
 *.pyc

@@ -33,6 +33,17 @@ Config source (choose one):
 - **File**: `config.json` (recommended for local/Docker)
 - **Environment variable**: `DS2API_CONFIG_JSON` (recommended for Vercel; supports raw JSON or Base64)
 
+Unified recommendation (best practice):
+
+```bash
+cp config.example.json config.json
+# Edit config.json
+```
+
+Use `config.json` as the single source of truth:
+- Local run: read `config.json` directly
+- Docker / Vercel: generate `DS2API_CONFIG_JSON` (Base64) from `config.json` and inject it
+
 ---
 
 ## 1. Local Run
@@ -99,11 +110,15 @@ go build -o ds2api ./cmd/ds2api
 ### 2.1 Basic Steps
 
 ```bash
-# Copy and edit environment
+# Copy env template
 cp .env.example .env
-# Edit .env, at minimum set:
+
+# Generate single-line Base64 from config.json
+DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
+
+# Edit .env and set:
 #   DS2API_ADMIN_KEY=your-admin-key
-#   DS2API_CONFIG_JSON={"keys":[...],"accounts":[...]}
+#   DS2API_CONFIG_JSON=${DS2API_CONFIG_JSON}
 
 # Start
 docker-compose up -d
@@ -167,14 +182,48 @@ If container logs look normal but the admin panel is unreachable, check these fi
 
 1. **Fork** the repo to your GitHub account
 2. **Import** the project on Vercel
-3. **Set environment variables** (at minimum):
+3. **Set environment variables** (minimum required: one variable):
 
    | Variable | Description |
    | --- | --- |
    | `DS2API_ADMIN_KEY` | Admin key (required) |
-   | `DS2API_CONFIG_JSON` | Config content, raw JSON or Base64 (required) |
+   | `DS2API_CONFIG_JSON` | Config content, raw JSON or Base64 (optional, recommended) |
 
 4. **Deploy**
+
+### 3.1.1 Recommended Input (avoid `DS2API_CONFIG_JSON` mistakes)
+
+If you prefer faster one-click bootstrap, you can leave `DS2API_CONFIG_JSON` empty first, then open `/admin` after deployment, import config, and sync it back to Vercel env vars from the "Vercel Sync" page.
+
+Recommended: in repo root, copy the template first and fill your real accounts:
+
+```bash
+cp config.example.json config.json
+# Edit config.json
+```
+
+Do not hand-edit large JSON directly in Vercel. Generate Base64 locally and paste it:
+
+```bash
+# Run in repo root
+DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
+echo "$DS2API_CONFIG_JSON"
+```
+
+If you choose to preconfigure before first deploy, set these vars in Vercel Project Settings -> Environment Variables:
+
+```text
+DS2API_ADMIN_KEY=replace-with-a-strong-secret
+DS2API_CONFIG_JSON=<the single-line Base64 output above>
+```
+
+Optional but recommended (for WebUI one-click Vercel sync):
+
+```text
+VERCEL_TOKEN=your-vercel-token
+VERCEL_PROJECT_ID=prj_xxxxxxxxxxxx
+VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # optional for personal accounts
+```
 
 ### 3.2 Optional Environment Variables
 
