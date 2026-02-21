@@ -280,6 +280,36 @@ func formatIncrementalStreamToolCallDeltas(deltas []toolCallDelta, ids map[int]s
 	return out
 }
 
+func formatFinalStreamToolCallsWithStableIDs(calls []util.ParsedToolCall, ids map[int]string) []map[string]any {
+	if len(calls) == 0 {
+		return nil
+	}
+	out := make([]map[string]any, 0, len(calls))
+	for i, c := range calls {
+		callID := ""
+		if ids != nil {
+			callID = strings.TrimSpace(ids[i])
+		}
+		if callID == "" {
+			callID = "call_" + strings.ReplaceAll(uuid.NewString(), "-", "")
+			if ids != nil {
+				ids[i] = callID
+			}
+		}
+		args, _ := json.Marshal(c.Input)
+		out = append(out, map[string]any{
+			"index": i,
+			"id":    callID,
+			"type":  "function",
+			"function": map[string]any{
+				"name":      c.Name,
+				"arguments": string(args),
+			},
+		})
+	}
+	return out
+}
+
 func writeOpenAIError(w http.ResponseWriter, status int, message string) {
 	writeJSON(w, status, map[string]any{
 		"error": map[string]any{

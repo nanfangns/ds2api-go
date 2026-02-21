@@ -45,13 +45,29 @@ func TestHandleResponsesStreamToolCallsHideRawOutputTextInCompleted(t *testing.T
 	if len(output) == 0 {
 		t.Fatalf("expected structured output entries, got %#v", responseObj["output"])
 	}
-	first, _ := output[0].(map[string]any)
-	if first["type"] != "tool_calls" {
-		t.Fatalf("expected first output type tool_calls, got %#v", first["type"])
+	var firstToolWrapper map[string]any
+	hasFunctionCall := false
+	for _, item := range output {
+		m, _ := item.(map[string]any)
+		if m == nil {
+			continue
+		}
+		if m["type"] == "function_call" {
+			hasFunctionCall = true
+		}
+		if m["type"] == "tool_calls" && firstToolWrapper == nil {
+			firstToolWrapper = m
+		}
 	}
-	toolCalls, _ := first["tool_calls"].([]any)
+	if !hasFunctionCall {
+		t.Fatalf("expected at least one function_call item for responses compatibility, got %#v", responseObj["output"])
+	}
+	if firstToolWrapper == nil {
+		t.Fatalf("expected a tool_calls wrapper item, got %#v", responseObj["output"])
+	}
+	toolCalls, _ := firstToolWrapper["tool_calls"].([]any)
 	if len(toolCalls) == 0 {
-		t.Fatalf("expected at least one tool_call in output, got %#v", first["tool_calls"])
+		t.Fatalf("expected at least one tool_call in output, got %#v", firstToolWrapper["tool_calls"])
 	}
 	call0, _ := toolCalls[0].(map[string]any)
 	if call0["type"] != "function" {
@@ -96,6 +112,137 @@ func TestHandleResponsesStreamIncompleteTailNotDuplicatedInCompletedOutputText(t
 	outputText, _ := responseObj["output_text"].(string)
 	if strings.Count(outputText, tail) > 1 {
 		t.Fatalf("expected incomplete tail not to be duplicated, got output_text=%q", outputText)
+	}
+}
+
+func TestHandleResponsesStreamEmitsReasoningCompatEvents(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	b, _ := json.Marshal(map[string]any{
+		"p": "response/thinking_content",
+		"v": "thought",
+	})
+	streamBody := "data: " + string(b) + "\n" + "data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-reasoner", "prompt", true, false, nil)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.reasoning.delta") {
+		t.Fatalf("expected response.reasoning.delta event, body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.reasoning_text.delta") {
+		t.Fatalf("expected response.reasoning_text.delta compatibility event, body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.reasoning_text.done") {
+		t.Fatalf("expected response.reasoning_text.done compatibility event, body=%s", body)
+	}
+}
+
+func TestHandleResponsesStreamEmitsFunctionCallCompatEvents(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	sseLine := func(v string) string {
+		b, _ := json.Marshal(map[string]any{
+			"p": "response/content",
+			"v": v,
+		})
+		return "data: " + string(b) + "\n"
+	}
+
+	streamBody := sseLine(`{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}`) + "data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", false, false, []string{"read_file"})
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.function_call_arguments.delta") {
+		t.Fatalf("expected response.function_call_arguments.delta compatibility event, body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.function_call_arguments.done") {
+		t.Fatalf("expected response.function_call_arguments.done compatibility event, body=%s", body)
+	}
+	donePayload, ok := extractSSEEventPayload(body, "response.function_call_arguments.done")
+	if !ok {
+		t.Fatalf("expected to parse response.function_call_arguments.done payload, body=%s", body)
+	}
+	if strings.TrimSpace(asString(donePayload["call_id"])) == "" {
+		t.Fatalf("expected call_id in response.function_call_arguments.done payload, payload=%#v", donePayload)
+	}
+	if strings.TrimSpace(asString(donePayload["response_id"])) == "" {
+		t.Fatalf("expected response_id in response.function_call_arguments.done payload, payload=%#v", donePayload)
+	}
+	doneCallID := strings.TrimSpace(asString(donePayload["call_id"]))
+	if doneCallID == "" {
+		t.Fatalf("expected non-empty call_id in done payload, payload=%#v", donePayload)
+	}
+	completed, ok := extractSSEEventPayload(body, "response.completed")
+	if !ok {
+		t.Fatalf("expected response.completed payload, body=%s", body)
+	}
+	responseObj, _ := completed["response"].(map[string]any)
+	output, _ := responseObj["output"].([]any)
+	if len(output) == 0 {
+		t.Fatalf("expected non-empty output in response.completed, response=%#v", responseObj)
+	}
+	var completedCallID string
+	for _, item := range output {
+		m, _ := item.(map[string]any)
+		if m == nil || m["type"] != "function_call" {
+			continue
+		}
+		completedCallID = strings.TrimSpace(asString(m["call_id"]))
+		if completedCallID != "" {
+			break
+		}
+	}
+	if completedCallID == "" {
+		t.Fatalf("expected function_call.call_id in completed output, output=%#v", output)
+	}
+	if completedCallID != doneCallID {
+		t.Fatalf("expected completed call_id to match stream done call_id, done=%q completed=%q", doneCallID, completedCallID)
+	}
+}
+
+func TestHandleResponsesStreamDetectsToolCallsFromThinkingChannel(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	sseLine := func(path, v string) string {
+		b, _ := json.Marshal(map[string]any{
+			"p": path,
+			"v": v,
+		})
+		return "data: " + string(b) + "\n"
+	}
+
+	streamBody := sseLine("response/thinking_content", `{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}`) + "data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-reasoner", "prompt", true, false, []string{"read_file"})
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.reasoning_text.delta") {
+		t.Fatalf("expected response.reasoning_text.delta event, body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.function_call_arguments.done") {
+		t.Fatalf("expected response.function_call_arguments.done event from thinking channel, body=%s", body)
+	}
+	if !strings.Contains(body, "event: response.output_tool_call.done") {
+		t.Fatalf("expected response.output_tool_call.done event from thinking channel, body=%s", body)
 	}
 }
 

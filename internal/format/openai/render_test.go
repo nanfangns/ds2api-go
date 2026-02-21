@@ -21,16 +21,23 @@ func TestBuildResponseObjectToolCallsFollowChatShape(t *testing.T) {
 	}
 
 	output, _ := obj["output"].([]any)
-	if len(output) != 1 {
-		t.Fatalf("expected one tool_calls wrapper, got %#v", obj["output"])
+	if len(output) != 2 {
+		t.Fatalf("expected function_call + tool_calls wrapper, got %#v", obj["output"])
 	}
 
 	first, _ := output[0].(map[string]any)
-	if first["type"] != "tool_calls" {
-		t.Fatalf("expected first output item type tool_calls, got %#v", first["type"])
+	if first["type"] != "function_call" {
+		t.Fatalf("expected first output item type function_call, got %#v", first["type"])
+	}
+	if first["call_id"] == "" {
+		t.Fatalf("expected function_call item to have call_id, got %#v", first)
+	}
+	second, _ := output[1].(map[string]any)
+	if second["type"] != "tool_calls" {
+		t.Fatalf("expected second output item type tool_calls, got %#v", second["type"])
 	}
 	var toolCalls []map[string]any
-	switch v := first["tool_calls"].(type) {
+	switch v := second["tool_calls"].(type) {
 	case []map[string]any:
 		toolCalls = v
 	case []any:
@@ -43,7 +50,7 @@ func TestBuildResponseObjectToolCallsFollowChatShape(t *testing.T) {
 		}
 	}
 	if len(toolCalls) != 1 {
-		t.Fatalf("expected one tool call, got %#v", first["tool_calls"])
+		t.Fatalf("expected one tool call, got %#v", second["tool_calls"])
 	}
 	tc := toolCalls[0]
 	if tc["type"] != "function" || tc["id"] == "" {
@@ -132,15 +139,19 @@ func TestBuildResponseObjectDetectsToolCallFromThinkingChannel(t *testing.T) {
 	)
 
 	output, _ := obj["output"].([]any)
-	if len(output) != 2 {
-		t.Fatalf("expected reasoning + tool_calls outputs, got %#v", obj["output"])
+	if len(output) != 3 {
+		t.Fatalf("expected reasoning + function_call + tool_calls outputs, got %#v", obj["output"])
 	}
 	first, _ := output[0].(map[string]any)
 	if first["type"] != "reasoning" {
 		t.Fatalf("expected first output reasoning, got %#v", first["type"])
 	}
 	second, _ := output[1].(map[string]any)
-	if second["type"] != "tool_calls" {
-		t.Fatalf("expected second output tool_calls, got %#v", second["type"])
+	if second["type"] != "function_call" {
+		t.Fatalf("expected second output function_call, got %#v", second["type"])
+	}
+	third, _ := output[2].(map[string]any)
+	if third["type"] != "tool_calls" {
+		t.Fatalf("expected third output tool_calls, got %#v", third["type"])
 	}
 }

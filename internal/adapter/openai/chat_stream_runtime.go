@@ -99,7 +99,7 @@ func (s *chatStreamRuntime) finalize(finishReason string) {
 	if len(detected) > 0 && !s.toolCallsEmitted {
 		finishReason = "tool_calls"
 		delta := map[string]any{
-			"tool_calls": util.FormatOpenAIStreamToolCalls(detected),
+			"tool_calls": formatFinalStreamToolCallsWithStableIDs(detected, s.streamToolCallIDs),
 		}
 		if !s.firstChunkSent {
 			delta["role"] = "assistant"
@@ -203,7 +203,7 @@ func (s *chatStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedD
 					if len(evt.ToolCalls) > 0 {
 						s.toolCallsEmitted = true
 						tcDelta := map[string]any{
-							"tool_calls": util.FormatOpenAIStreamToolCalls(evt.ToolCalls),
+							"tool_calls": formatFinalStreamToolCallsWithStableIDs(evt.ToolCalls, s.streamToolCallIDs),
 						}
 						if !s.firstChunkSent {
 							tcDelta["role"] = "assistant"
