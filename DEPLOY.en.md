@@ -135,11 +135,12 @@ docker-compose up -d --build
 
 ### 2.3 Docker Architecture
 
-The `Dockerfile` uses a three-stage build:
+The `Dockerfile` now provides two image paths:
 
-1. **WebUI build stage**: `node:20` image, runs `npm ci && npm run build`
-2. **Go build stage**: `golang:1.24` image, compiles the binary
-3. **Runtime stage**: `debian:bookworm-slim` minimal image
+1. **Default local/dev path (`runtime-from-source`)**: a three-stage build (WebUI build + Go build + runtime).
+2. **Release path (`runtime-from-dist`)**: CI first creates `dist/ds2api_<tag>_linux_<arch>.tar.gz`, then Docker directly reuses the binary and `static/admin` assets from those release archives, without running `npm build`/`go build` again.
+
+The release path keeps Docker images aligned with release archives and reduces duplicate build work.
 
 Container entry command: `/usr/local/bin/ds2api`, default exposed port: `5001`.
 

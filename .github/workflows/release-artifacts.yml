@@ -87,6 +87,14 @@ jobs:
             rm -rf "${STAGE}"
           done
 
+      - name: Prepare Docker release inputs
+        run: |
+          set -euo pipefail
+          TAG="${RELEASE_TAG}"
+          mkdir -p dist/docker-input
+          cp "dist/ds2api_${TAG}_linux_amd64.tar.gz" "dist/docker-input/linux_amd64.tar.gz"
+          cp "dist/ds2api_${TAG}_linux_arm64.tar.gz" "dist/docker-input/linux_arm64.tar.gz"
+
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
@@ -136,6 +144,7 @@ jobs:
         with:
           context: .
           file: ./Dockerfile
+          target: runtime-from-dist
           push: true
           platforms: linux/amd64,linux/arm64
           tags: ${{ steps.meta_release.outputs.tags }}
@@ -148,11 +157,13 @@ jobs:
 
           docker buildx build \
             --platform linux/amd64 \
+            --target runtime-from-dist \
             --output type=docker,dest="dist/ds2api_${TAG}_docker_linux_amd64.tar" \
             .
 
           docker buildx build \
             --platform linux/arm64 \
+            --target runtime-from-dist \
             --output type=docker,dest="dist/ds2api_${TAG}_docker_linux_arm64.tar" \
             .
 

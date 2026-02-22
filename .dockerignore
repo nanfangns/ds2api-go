@@ -10,7 +10,9 @@ __pycache__
 .Python
 build/
 develop-eggs/
-dist/
+dist/*
+!dist/docker-input/
+!dist/docker-input/*.tar.gz
 downloads/
 eggs/
 .eggs/
