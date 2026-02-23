@@ -82,8 +82,8 @@ Manually build WebUI to `static/admin/`:
 ## Running Tests
 
 ```bash
-# Go unit tests
-go test ./...
+# Go + Node unit tests (recommended)
+./tests/scripts/run-unit-all.sh
 
 # End-to-end live tests (real accounts)
 ./tests/scripts/run-live.sh
@@ -104,13 +104,20 @@ ds2api/
 │   ├── account/             # Account pool and concurrency queue
 │   ├── adapter/
 │   │   ├── openai/          # OpenAI adapter
-│   │   └── claude/          # Claude adapter
+│   │   ├── claude/          # Claude adapter
+│   │   └── gemini/          # Gemini adapter
 │   ├── admin/               # Admin API handlers
 │   ├── auth/                # Auth and JWT
+│   ├── claudeconv/          # Claude message conversion
+│   ├── compat/              # Compatibility helpers
 │   ├── config/              # Config loading and hot-reload
 │   ├── deepseek/            # DeepSeek client, PoW WASM
+│   ├── devcapture/          # Dev packet capture
+│   ├── format/              # Output formatting
+│   ├── prompt/              # Prompt building
 │   ├── server/              # HTTP routing (chi router)
 │   ├── sse/                 # SSE parsing utilities
+│   ├── stream/              # Unified stream consumption engine
 │   ├── testsuite/           # Testsuite core logic
 │   ├── util/                # Common utilities
 │   └── webui/               # WebUI static hosting

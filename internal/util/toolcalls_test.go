@@ -38,14 +38,39 @@ func TestParseToolCallsWithFunctionArgumentsString(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsKeepsUnknownAsFallback(t *testing.T) {
+func TestParseToolCallsRejectsUnknownToolName(t *testing.T) {
 	text := `{"tool_calls":[{"name":"unknown","input":{}}]}`
 	calls := ParseToolCalls(text, []string{"search"})
-	if len(calls) != 1 {
-		t.Fatalf("expected fallback 1 call, got %d", len(calls))
+	if len(calls) != 0 {
+		t.Fatalf("expected unknown tool to be rejected, got %#v", calls)
 	}
-	if calls[0].Name != "unknown" {
-		t.Fatalf("unexpected name: %s", calls[0].Name)
+}
+
+func TestParseToolCallsDetailedMarksPolicyRejection(t *testing.T) {
+	text := `{"tool_calls":[{"name":"unknown","input":{}}]}`
+	res := ParseToolCallsDetailed(text, []string{"search"})
+	if !res.SawToolCallSyntax {
+		t.Fatalf("expected SawToolCallSyntax=true, got %#v", res)
+	}
+	if !res.RejectedByPolicy {
+		t.Fatalf("expected RejectedByPolicy=true, got %#v", res)
+	}
+	if len(res.Calls) != 0 {
+		t.Fatalf("expected no calls after policy rejection, got %#v", res.Calls)
+	}
+}
+
+func TestParseToolCallsDetailedRejectsWhenAllowListEmpty(t *testing.T) {
+	text := `{"tool_calls":[{"name":"search","input":{"q":"go"}}]}`
+	res := ParseToolCallsDetailed(text, nil)
+	if !res.SawToolCallSyntax {
+		t.Fatalf("expected SawToolCallSyntax=true, got %#v", res)
+	}
+	if !res.RejectedByPolicy {
+		t.Fatalf("expected RejectedByPolicy=true, got %#v", res)
+	}
+	if len(res.Calls) != 0 {
+		t.Fatalf("expected no calls when allow-list is empty, got %#v", res.Calls)
 	}
 }
 

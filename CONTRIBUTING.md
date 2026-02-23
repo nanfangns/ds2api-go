@@ -82,8 +82,8 @@ docker-compose -f docker-compose.dev.yml up
 ## 运行测试
 
 ```bash
-# Go 单元测试
-go test ./...
+# Go + Node 单元测试（推荐）
+./tests/scripts/run-unit-all.sh
 
 # 端到端全链路测试（真实账号）
 ./tests/scripts/run-live.sh
@@ -104,13 +104,20 @@ ds2api/
 │   ├── account/             # 账号池与并发队列
 │   ├── adapter/
 │   │   ├── openai/          # OpenAI 兼容适配器
-│   │   └── claude/          # Claude 兼容适配器
+│   │   ├── claude/          # Claude 兼容适配器
+│   │   └── gemini/          # Gemini 兼容适配器
 │   ├── admin/               # Admin API handlers
 │   ├── auth/                # 鉴权与 JWT
+│   ├── claudeconv/          # Claude 消息格式转换
+│   ├── compat/              # 兼容性辅助
 │   ├── config/              # 配置加载与热更新
 │   ├── deepseek/            # DeepSeek 客户端、PoW WASM
+│   ├── devcapture/          # 开发抓包
+│   ├── format/              # 输出格式化
+│   ├── prompt/              # Prompt 构建
 │   ├── server/              # HTTP 路由（chi router）
 │   ├── sse/                 # SSE 解析工具
+│   ├── stream/              # 统一流式消费引擎
 │   ├── testsuite/           # 测试集核心逻辑
 │   ├── util/                # 通用工具
 │   └── webui/               # WebUI 静态托管

@@ -15,6 +15,7 @@
 - [健康检查](#健康检查)
 - [OpenAI 兼容接口](#openai-兼容接口)
 - [Claude 兼容接口](#claude-兼容接口)
+- [Gemini 兼容接口](#gemini-兼容接口)
 - [Admin 接口](#admin-接口)
 - [错误响应格式](#错误响应格式)
 - [cURL 示例](#curl-示例)
@@ -56,7 +57,7 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 
 ## 鉴权规则
 
-### 业务接口（`/v1/*`、`/anthropic/*`）
+### 业务接口（`/v1/*`、`/anthropic/*`、`/v1beta/models/*`）
 
 支持两种传参方式：
 
@@ -97,11 +98,24 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 | GET | `/anthropic/v1/models` | 无 | Claude 模型列表 |
 | POST | `/anthropic/v1/messages` | 业务 | Claude 消息接口 |
 | POST | `/anthropic/v1/messages/count_tokens` | 业务 | Claude token 计数 |
+| POST | `/v1/messages` | 业务 | Claude 消息快捷路径 |
+| POST | `/messages` | 业务 | Claude 消息快捷路径 |
+| POST | `/v1/messages/count_tokens` | 业务 | Claude token 计数快捷路径 |
+| POST | `/messages/count_tokens` | 业务 | Claude token 计数快捷路径 |
+| POST | `/v1beta/models/{model}:generateContent` | 业务 | Gemini 非流式 |
+| POST | `/v1beta/models/{model}:streamGenerateContent` | 业务 | Gemini 流式 |
+| POST | `/v1/models/{model}:generateContent` | 业务 | Gemini 非流式兼容路径 |
+| POST | `/v1/models/{model}:streamGenerateContent` | 业务 | Gemini 流式兼容路径 |
 | POST | `/admin/login` | 无 | 管理登录 |
 | GET | `/admin/verify` | JWT | 校验管理 JWT |
 | GET | `/admin/vercel/config` | Admin | 读取 Vercel 预配置 |
 | GET | `/admin/config` | Admin | 读取配置（脱敏） |
 | POST | `/admin/config` | Admin | 更新配置 |
+| GET | `/admin/settings` | Admin | 读取运行时设置 |
+| PUT | `/admin/settings` | Admin | 更新运行时设置（热更新） |
+| POST | `/admin/settings/password` | Admin | 更新 Admin 密码并使旧 JWT 失效 |
+| POST | `/admin/config/import` | Admin | 导入配置（merge/replace） |
+| GET | `/admin/config/export` | Admin | 导出完整配置（含 `config`/`json`/`base64`） |
 | POST | `/admin/keys` | Admin | 添加 API key |
 | DELETE | `/admin/keys/{key}` | Admin | 删除 API key |
 | GET | `/admin/accounts` | Admin | 分页账号列表 |
@@ -115,6 +129,8 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 | POST | `/admin/vercel/sync` | Admin | 同步配置到 Vercel |
 | GET | `/admin/vercel/status` | Admin | Vercel 同步状态 |
 | GET | `/admin/export` | Admin | 导出配置 JSON/Base64 |
+| GET | `/admin/dev/captures` | Admin | 查看本地抓包记录 |
+| DELETE | `/admin/dev/captures` | Admin | 清空本地抓包记录 |
 
 ---
 
@@ -286,8 +302,10 @@ OpenAI Responses 风格接口，兼容 `input` 或 `messages`。
 | `instructions` | string | ❌ | 自动前置为 system 消息 |
 | `stream` | boolean | ❌ | 默认 `false` |
 | `tools` | array | ❌ | 与 chat 同样的工具识别与转译策略 |
+| `tool_choice` | string/object | ❌ | 支持 `auto`/`none`/`required` 与强制函数（`{"type":"function","name":"..."}`） |
 
 **非流式响应**：返回标准 `response` 对象，`id` 形如 `resp_xxx`，并写入内存 TTL 存储。
+当 `tool_choice=required` 且未产出有效工具调用时，返回 HTTP `422`（`error.code=tool_choice_violation`）。
 
 **流式响应（SSE）**：最小事件序列如下。
 
@@ -295,17 +313,35 @@ OpenAI Responses 风格接口，兼容 `input` 或 `messages`。
 event: response.created
 data: {"type":"response.created","id":"resp_xxx","status":"in_progress",...}
 
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","id":"resp_xxx","delta":"..."}
+event: response.output_item.added
+data: {"type":"response.output_item.added","response_id":"resp_xxx","item":{"type":"message|function_call",...},...}
 
-event: response.output_tool_call.delta
-data: {"type":"response.output_tool_call.delta","id":"resp_xxx","tool_calls":[...]}
+event: response.content_part.added
+data: {"type":"response.content_part.added","response_id":"resp_xxx","part":{"type":"output_text",...},...}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","response_id":"resp_xxx","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"..."}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","response_id":"resp_xxx","call_id":"call_xxx","delta":"..."}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","response_id":"resp_xxx","call_id":"call_xxx","name":"tool","arguments":"{...}"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","response_id":"resp_xxx",...}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","response_id":"resp_xxx","item":{"type":"message|function_call",...},...}
 
 event: response.completed
 data: {"type":"response.completed","response":{...}}
 
 data: [DONE]
 ```
+
+流式场景下若 `tool_choice=required` 违规，会返回 `response.failed` 后结束（不再发送 `response.completed`）。
+未在 `tools` 声明中的工具名会被严格拒绝，不会作为有效 tool call 下发。
 
 ### `GET /v1/responses/{response_id}`
 
@@ -327,6 +363,8 @@ data: [DONE]
 ---
 
 ## Claude 兼容接口
+
+除标准路径 `/anthropic/v1/*` 外，还支持快捷路径 `/v1/messages`、`/messages`、`/v1/messages/count_tokens`、`/messages/count_tokens`。
 
 ### `GET /anthropic/v1/models`
 
@@ -451,6 +489,37 @@ data: {"type":"message_stop"}
 
 ---
 
+## Gemini 兼容接口
+
+支持路径：
+
+- `/v1beta/models/{model}:generateContent`
+- `/v1beta/models/{model}:streamGenerateContent`
+- `/v1/models/{model}:generateContent`（兼容路径）
+- `/v1/models/{model}:streamGenerateContent`（兼容路径）
+
+鉴权方式同业务接口（`Authorization: Bearer <token>` 或 `x-api-key`）。
+
+### `POST /v1beta/models/{model}:generateContent`
+
+请求体兼容 Gemini `contents` / `tools` 字段，模型名可用 alias 自动映射到 DeepSeek 模型。
+
+响应为 Gemini 兼容结构，核心字段包括：
+
+- `candidates[].content.parts[].text`
+- `candidates[].content.parts[].functionCall`（工具调用时）
+- `usageMetadata`（`promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`）
+
+### `POST /v1beta/models/{model}:streamGenerateContent`
+
+返回 SSE（`text/event-stream`），每个 chunk 为一条 `data: <json>`：
+
+- 常规文本：持续返回增量文本 chunk
+- `tools` 场景：会缓冲并在结束时输出 `functionCall` 结构
+- 结束 chunk：包含 `finishReason: "STOP"` 与 `usageMetadata`
+
+---
+
 ## Admin 接口
 
 ### `POST /admin/login`
@@ -546,6 +615,51 @@ data: {"type":"message_stop"}
   }
 }
 ```
+
+### `GET /admin/settings`
+
+读取运行时设置与状态，返回：
+
+- `admin`（JWT 过期、默认密码告警等）
+- `runtime`（`account_max_inflight`、`account_max_queue`、`global_max_inflight`）
+- `toolcall` / `responses` / `embeddings`
+- `claude_mapping` / `model_aliases`
+- `env_backed`、`needs_vercel_sync`
+
+### `PUT /admin/settings`
+
+热更新运行时设置。支持更新：
+
+- `admin.jwt_expire_hours`
+- `runtime.account_max_inflight` / `runtime.account_max_queue` / `runtime.global_max_inflight`
+- `toolcall.mode` / `toolcall.early_emit_confidence`
+- `responses.store_ttl_seconds`
+- `embeddings.provider`
+- `claude_mapping`
+- `model_aliases`
+
+### `POST /admin/settings/password`
+
+更新管理密码并使旧 JWT 失效。
+
+请求示例：
+
+```json
+{"new_password":"your-new-password"}
+```
+
+### `POST /admin/config/import`
+
+导入完整配置，支持：
+
+- `mode=merge`（默认）
+- `mode=replace`
+
+请求可直接传配置对象，或使用 `{"config": {...}, "mode":"merge"}` 包裹格式。
+
+### `GET /admin/config/export`
+
+导出完整配置，返回 `config`、`json`、`base64` 三种格式。
 
 ### `POST /admin/keys`
 
@@ -754,6 +868,23 @@ data: {"type":"message_stop"}
 }
 ```
 
+### `GET /admin/dev/captures`
+
+查看本地抓包状态与最近记录（需 Admin 鉴权）：
+
+- `enabled`
+- `limit`
+- `max_body_bytes`
+- `items`
+
+### `DELETE /admin/dev/captures`
+
+清空抓包记录，返回：
+
+```json
+{"success":true,"detail":"capture logs cleared"}
+```
+
 ---
 
 ## 错误响应格式
@@ -772,6 +903,18 @@ data: {"type":"message_stop"}
 ```
 
 Admin 接口保持 `{"detail":"..."}`。
+
+Gemini 路由使用 Google 风格错误结构：
+
+```json
+{
+  "error": {
+    "code": 400,
+    "message": "invalid json",
+    "status": "INVALID_ARGUMENT"
+  }
+}
+```
 
 建议客户端处理逻辑：检查 HTTP 状态码 + 解析 `error` 或 `detail` 字段。
 
@@ -874,6 +1017,38 @@ curl http://localhost:5001/v1/chat/completions \
             "required": ["city"]
           }
         }
+      }
+    ]
+  }'
+```
+
+### Gemini 非流式
+
+```bash
+curl "http://localhost:5001/v1beta/models/gemini-2.5-pro:generateContent" \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{"text": "用三句话介绍 Go 语言"}]
+      }
+    ]
+  }'
+```
+
+### Gemini 流式
+
+```bash
+curl "http://localhost:5001/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{"text": "写一个简短摘要"}]
       }
     ]
   }'

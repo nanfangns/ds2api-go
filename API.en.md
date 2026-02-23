@@ -15,6 +15,7 @@ This document describes the actual behavior of the current Go codebase.
 - [Health Endpoints](#health-endpoints)
 - [OpenAI-Compatible API](#openai-compatible-api)
 - [Claude-Compatible API](#claude-compatible-api)
+- [Gemini-Compatible API](#gemini-compatible-api)
 - [Admin API](#admin-api)
 - [Error Payloads](#error-payloads)
 - [cURL Examples](#curl-examples)
@@ -56,7 +57,7 @@ For Vercel one-click bootstrap, you can set only `DS2API_ADMIN_KEY` first, then 
 
 ## Authentication
 
-### Business Endpoints (`/v1/*`, `/anthropic/*`)
+### Business Endpoints (`/v1/*`, `/anthropic/*`, `/v1beta/models/*`)
 
 Two header formats accepted:
 
@@ -97,11 +98,24 @@ Two header formats accepted:
 | GET | `/anthropic/v1/models` | None | Claude model list |
 | POST | `/anthropic/v1/messages` | Business | Claude messages |
 | POST | `/anthropic/v1/messages/count_tokens` | Business | Claude token counting |
+| POST | `/v1/messages` | Business | Claude shortcut path |
+| POST | `/messages` | Business | Claude shortcut path |
+| POST | `/v1/messages/count_tokens` | Business | Claude token counting shortcut |
+| POST | `/messages/count_tokens` | Business | Claude token counting shortcut |
+| POST | `/v1beta/models/{model}:generateContent` | Business | Gemini non-stream |
+| POST | `/v1beta/models/{model}:streamGenerateContent` | Business | Gemini stream |
+| POST | `/v1/models/{model}:generateContent` | Business | Gemini non-stream compat path |
+| POST | `/v1/models/{model}:streamGenerateContent` | Business | Gemini stream compat path |
 | POST | `/admin/login` | None | Admin login |
 | GET | `/admin/verify` | JWT | Verify admin JWT |
 | GET | `/admin/vercel/config` | Admin | Read preconfigured Vercel creds |
 | GET | `/admin/config` | Admin | Read sanitized config |
 | POST | `/admin/config` | Admin | Update config |
+| GET | `/admin/settings` | Admin | Read runtime settings |
+| PUT | `/admin/settings` | Admin | Update runtime settings (hot reload) |
+| POST | `/admin/settings/password` | Admin | Update admin password and invalidate old JWTs |
+| POST | `/admin/config/import` | Admin | Import config (merge/replace) |
+| GET | `/admin/config/export` | Admin | Export full config (`config`/`json`/`base64`) |
 | POST | `/admin/keys` | Admin | Add API key |
 | DELETE | `/admin/keys/{key}` | Admin | Delete API key |
 | GET | `/admin/accounts` | Admin | Paginated account list |
@@ -115,6 +129,8 @@ Two header formats accepted:
 | POST | `/admin/vercel/sync` | Admin | Sync config to Vercel |
 | GET | `/admin/vercel/status` | Admin | Vercel sync status |
 | GET | `/admin/export` | Admin | Export config JSON/Base64 |
+| GET | `/admin/dev/captures` | Admin | Read local packet-capture entries |
+| DELETE | `/admin/dev/captures` | Admin | Clear local packet-capture entries |
 
 ---
 
@@ -286,8 +302,10 @@ OpenAI Responses-style endpoint, accepting either `input` or `messages`.
 | `instructions` | string | ❌ | Prepended as a system message |
 | `stream` | boolean | ❌ | Default `false` |
 | `tools` | array | ❌ | Same tool detection/translation policy as chat |
+| `tool_choice` | string/object | ❌ | Supports `auto`/`none`/`required` and forced function selection (`{"type":"function","name":"..."}`) |
 
 **Non-stream**: Returns a standard `response` object with an ID like `resp_xxx`, and stores it in in-memory TTL cache.
+If `tool_choice=required` and no valid tool call is produced, DS2API returns HTTP `422` (`error.code=tool_choice_violation`).
 
 **Stream (SSE)**: minimal event sequence:
 
@@ -295,17 +313,35 @@ OpenAI Responses-style endpoint, accepting either `input` or `messages`.
 event: response.created
 data: {"type":"response.created","id":"resp_xxx","status":"in_progress",...}
 
-event: response.output_text.delta
-data: {"type":"response.output_text.delta","id":"resp_xxx","delta":"..."}
+event: response.output_item.added
+data: {"type":"response.output_item.added","response_id":"resp_xxx","item":{"type":"message|function_call",...},...}
 
-event: response.output_tool_call.delta
-data: {"type":"response.output_tool_call.delta","id":"resp_xxx","tool_calls":[...]}
+event: response.content_part.added
+data: {"type":"response.content_part.added","response_id":"resp_xxx","part":{"type":"output_text",...},...}
+
+event: response.output_text.delta
+data: {"type":"response.output_text.delta","response_id":"resp_xxx","item_id":"msg_xxx","output_index":0,"content_index":0,"delta":"..."}
+
+event: response.function_call_arguments.delta
+data: {"type":"response.function_call_arguments.delta","response_id":"resp_xxx","call_id":"call_xxx","delta":"..."}
+
+event: response.function_call_arguments.done
+data: {"type":"response.function_call_arguments.done","response_id":"resp_xxx","call_id":"call_xxx","name":"tool","arguments":"{...}"}
+
+event: response.content_part.done
+data: {"type":"response.content_part.done","response_id":"resp_xxx",...}
+
+event: response.output_item.done
+data: {"type":"response.output_item.done","response_id":"resp_xxx","item":{"type":"message|function_call",...},...}
 
 event: response.completed
 data: {"type":"response.completed","response":{...}}
 
 data: [DONE]
 ```
+
+If `tool_choice=required` is violated in stream mode, DS2API emits `response.failed` then `[DONE]` (no `response.completed`).
+Unknown tool names (outside declared `tools`) are rejected and will not be emitted as valid tool calls.
 
 ### `GET /v1/responses/{response_id}`
 
@@ -327,6 +363,8 @@ Business auth required. Returns OpenAI-compatible embeddings shape.
 ---
 
 ## Claude-Compatible API
+
+Besides `/anthropic/v1/*`, DS2API also supports shortcut paths: `/v1/messages`, `/messages`, `/v1/messages/count_tokens`, `/messages/count_tokens`.
 
 ### `GET /anthropic/v1/models`
 
@@ -451,6 +489,37 @@ data: {"type":"message_stop"}
 
 ---
 
+## Gemini-Compatible API
+
+Supported paths:
+
+- `/v1beta/models/{model}:generateContent`
+- `/v1beta/models/{model}:streamGenerateContent`
+- `/v1/models/{model}:generateContent` (compat path)
+- `/v1/models/{model}:streamGenerateContent` (compat path)
+
+Authentication is the same as other business routes (`Authorization: Bearer <token>` or `x-api-key`).
+
+### `POST /v1beta/models/{model}:generateContent`
+
+Request body accepts Gemini-style `contents` / `tools`. Model names can use aliases and are mapped to DeepSeek models.
+
+Response uses Gemini-compatible fields, including:
+
+- `candidates[].content.parts[].text`
+- `candidates[].content.parts[].functionCall` (when tool call is produced)
+- `usageMetadata` (`promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`)
+
+### `POST /v1beta/models/{model}:streamGenerateContent`
+
+Returns SSE (`text/event-stream`), each chunk as `data: <json>`:
+
+- regular text: incremental text chunks
+- `tools` mode: buffered and emitted as `functionCall` at finalize phase
+- final chunk: includes `finishReason: "STOP"` and `usageMetadata`
+
+---
+
 ## Admin API
 
 ### `POST /admin/login`
@@ -546,6 +615,51 @@ Updatable fields: `keys`, `accounts`, `claude_mapping`.
   }
 }
 ```
+
+### `GET /admin/settings`
+
+Reads runtime settings and status, including:
+
+- `admin` (JWT expiry, default-password warning, etc.)
+- `runtime` (`account_max_inflight`, `account_max_queue`, `global_max_inflight`)
+- `toolcall` / `responses` / `embeddings`
+- `claude_mapping` / `model_aliases`
+- `env_backed`, `needs_vercel_sync`
+
+### `PUT /admin/settings`
+
+Hot-updates runtime settings. Supported fields:
+
+- `admin.jwt_expire_hours`
+- `runtime.account_max_inflight` / `runtime.account_max_queue` / `runtime.global_max_inflight`
+- `toolcall.mode` / `toolcall.early_emit_confidence`
+- `responses.store_ttl_seconds`
+- `embeddings.provider`
+- `claude_mapping`
+- `model_aliases`
+
+### `POST /admin/settings/password`
+
+Updates admin password and invalidates existing JWTs.
+
+Request example:
+
+```json
+{"new_password":"your-new-password"}
+```
+
+### `POST /admin/config/import`
+
+Imports full config with:
+
+- `mode=merge` (default)
+- `mode=replace`
+
+The request can send config directly, or wrapped as `{"config": {...}, "mode":"merge"}`.
+
+### `GET /admin/config/export`
+
+Exports full config in three forms: `config`, `json`, and `base64`.
 
 ### `POST /admin/keys`
 
@@ -754,6 +868,23 @@ Or manual deploy required:
 }
 ```
 
+### `GET /admin/dev/captures`
+
+Reads local packet-capture status and recent entries (Admin auth required):
+
+- `enabled`
+- `limit`
+- `max_body_bytes`
+- `items`
+
+### `DELETE /admin/dev/captures`
+
+Clears packet-capture entries:
+
+```json
+{"success":true,"detail":"capture logs cleared"}
+```
+
 ---
 
 ## Error Payloads
@@ -772,6 +903,18 @@ Compatible routes (`/v1/*`, `/anthropic/*`) use the same error envelope:
 ```
 
 Admin routes keep `{"detail":"..."}`.
+
+Gemini routes use Google-style errors:
+
+```json
+{
+  "error": {
+    "code": 400,
+    "message": "invalid json",
+    "status": "INVALID_ARGUMENT"
+  }
+}
+```
 
 Clients should handle HTTP status code plus `error` / `detail` fields.
 
@@ -874,6 +1017,38 @@ curl http://localhost:5001/v1/chat/completions \
             "required": ["city"]
           }
         }
+      }
+    ]
+  }'
+```
+
+### Gemini Non-Stream
+
+```bash
+curl "http://localhost:5001/v1beta/models/gemini-2.5-pro:generateContent" \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{"text": "Introduce Go in three sentences"}]
+      }
+    ]
+  }'
+```
+
+### Gemini Stream
+
+```bash
+curl "http://localhost:5001/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
+  -H "Authorization: Bearer your-api-key" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "contents": [
+      {
+        "role": "user",
+        "parts": [{"text": "Write a short summary"}]
       }
     ]
   }'

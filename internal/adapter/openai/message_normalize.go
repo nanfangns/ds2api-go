@@ -3,6 +3,7 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"ds2api/internal/config"
@@ -163,10 +164,41 @@ func normalizeOpenAIContentForPrompt(v any) string {
 func normalizeOpenAIArgumentsForPrompt(v any) string {
 	switch x := v.(type) {
 	case string:
-		return strings.TrimSpace(x)
+		return normalizeToolArgumentString(x)
 	default:
 		return marshalToPromptString(v)
 	}
+}
+
+func normalizeToolArgumentString(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return ""
+	}
+	if !looksLikeConcatenatedJSON(trimmed) {
+		return trimmed
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	values := make([]any, 0, 2)
+	for {
+		var v any
+		if err := dec.Decode(&v); err != nil {
+			if err == io.EOF {
+				break
+			}
+			return trimmed
+		}
+		values = append(values, v)
+	}
+	if len(values) < 2 {
+		return trimmed
+	}
+	last := values[len(values)-1]
+	b, err := json.Marshal(last)
+	if err != nil || len(b) == 0 {
+		return trimmed
+	}
+	return string(b)
 }
 
 func marshalToPromptString(v any) string {

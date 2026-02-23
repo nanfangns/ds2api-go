@@ -135,11 +135,12 @@ docker-compose up -d --build
 
 ### 2.3 Docker Architecture
 
-The `Dockerfile` uses a three-stage build:
+The `Dockerfile` now provides two image paths:
 
-1. **WebUI build stage**: `node:20` image, runs `npm ci && npm run build`
-2. **Go build stage**: `golang:1.24` image, compiles the binary
-3. **Runtime stage**: `debian:bookworm-slim` minimal image
+1. **Default local/dev path (`runtime-from-source`)**: a three-stage build (WebUI build + Go build + runtime).
+2. **Release path (`runtime-from-dist`)**: CI first creates `dist/ds2api_<tag>_linux_<arch>.tar.gz`, then Docker directly reuses the binary and `static/admin` assets from those release archives, without running `npm build`/`go build` again.
+
+The release path keeps Docker images aligned with release archives and reduces duplicate build work.
 
 Container entry command: `/usr/local/bin/ds2api`, default exposed port: `5001`.
 
@@ -160,7 +161,7 @@ Docker Compose includes a built-in health check:
 
 ```yaml
 healthcheck:
-  test: ["CMD", "wget", "-qO-", "http://localhost:${PORT:-5001}/healthz"]
+  test: ["CMD", "/usr/local/bin/busybox", "wget", "-qO-", "http://localhost:${PORT:-5001}/healthz"]
   interval: 30s
   timeout: 10s
   retries: 3
@@ -233,6 +234,8 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # optional for personal accounts
 | `DS2API_ACCOUNT_CONCURRENCY` | Alias (legacy compat) | — |
 | `DS2API_ACCOUNT_MAX_QUEUE` | Waiting queue limit | `recommended_concurrency` |
 | `DS2API_ACCOUNT_QUEUE_SIZE` | Alias (legacy compat) | — |
+| `DS2API_GLOBAL_MAX_INFLIGHT` | Global inflight limit | `recommended_concurrency` |
+| `DS2API_MAX_INFLIGHT` | Alias (legacy compat) | — |
 | `DS2API_VERCEL_INTERNAL_SECRET` | Hybrid streaming internal auth | Falls back to `DS2API_ADMIN_KEY` |
 | `DS2API_VERCEL_STREAM_LEASE_TTL_SECONDS` | Stream lease TTL | `900` |
 | `VERCEL_TOKEN` | Vercel sync token | — |
@@ -339,6 +342,7 @@ Built-in GitHub Actions workflow: `.github/workflows/release-artifacts.yml`
 
 - **Trigger**: only on Release `published` (no build on normal push)
 - **Outputs**: multi-platform binary archives + `sha256sums.txt`
+- **Container publishing**: GHCR only (`ghcr.io/cjackhwang/ds2api`)
 
 | Platform | Architecture | Format |
 | --- | --- | --- |
@@ -359,8 +363,8 @@ Each archive includes:
 ```bash
 # 1. Download the archive for your platform
 # 2. Extract
-tar -xzf ds2api_v1.7.0_linux_amd64.tar.gz
-cd ds2api_v1.7.0_linux_amd64
+tar -xzf ds2api_<tag>_linux_amd64.tar.gz
+cd ds2api_<tag>_linux_amd64
 
 # 3. Configure
 cp config.example.json config.json
@@ -372,9 +376,19 @@ cp config.example.json config.json
 
 ### Maintainer Release Flow
 
-1. Create and publish a GitHub Release (with tag, e.g. `v1.7.0`)
+1. Create and publish a GitHub Release (with tag, for example `vX.Y.Z`)
 2. Wait for the `Release Artifacts` workflow to complete
 3. Download the matching archive from Release Assets
+
+### Pull from GHCR (Optional)
+
+```bash
+# latest
+docker pull ghcr.io/cjackhwang/ds2api:latest
+
+# specific version (example)
+docker pull ghcr.io/cjackhwang/ds2api:v2.1.2
+```
 
 ---
 

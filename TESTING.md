@@ -31,6 +31,15 @@ DS2API 提供两个层级的测试：
 ./tests/scripts/run-unit-node.sh
 ```
 
+```bash
+# 结构与流程门禁
+./tests/scripts/check-refactor-line-gate.sh
+./tests/scripts/check-node-split-syntax.sh
+
+# 发布阻断：阶段 6 手工烟测签字检查（默认读取 plans/stage6-manual-smoke.md）
+./tests/scripts/check-stage6-manual-smoke.sh
+```
+
 ### 端到端测试 | End-to-End Tests
 
 ```bash
@@ -41,8 +50,7 @@ DS2API 提供两个层级的测试：
 
 1. **Preflight 检查**：
    - `go test ./... -count=1`（单元测试）
-   - `node --check api/chat-stream.js`（语法检查）
-   - `node --check api/helpers/stream-tool-sieve.js`（语法检查）
+   - `./tests/scripts/check-node-split-syntax.sh`（Node 拆分模块语法门禁）
    - `node --test api/helpers/stream-tool-sieve.test.js api/chat-stream.test.js api/compat/js_compat_test.js`（Node 流式拦截 + compat 单测）
    - `npm run build --prefix webui`（WebUI 构建检查）
 

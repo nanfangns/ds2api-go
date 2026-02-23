@@ -167,3 +167,32 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantMultipleToolCallsRemainSepara
 		t.Fatalf("unexpected concatenated function arguments detected: %q", content)
 	}
 }
+
+func TestNormalizeOpenAIMessagesForPrompt_RepairsConcatenatedToolArguments(t *testing.T) {
+	raw := []any{
+		map[string]any{
+			"role": "assistant",
+			"tool_calls": []any{
+				map[string]any{
+					"id": "call_1",
+					"function": map[string]any{
+						"name":      "search_web",
+						"arguments": `{}{"query":"测试工具调用"}`,
+					},
+				},
+			},
+		},
+	}
+
+	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
+	if len(normalized) != 1 {
+		t.Fatalf("expected one normalized message, got %d", len(normalized))
+	}
+	content, _ := normalized[0]["content"].(string)
+	if !strings.Contains(content, `function.arguments: {"query":"测试工具调用"}`) {
+		t.Fatalf("expected repaired arguments in tool history, got %q", content)
+	}
+	if strings.Contains(content, `{}{"query":"测试工具调用"}`) {
+		t.Fatalf("expected concatenated JSON to be repaired, got %q", content)
+	}
+}

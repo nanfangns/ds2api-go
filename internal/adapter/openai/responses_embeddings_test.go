@@ -73,6 +73,32 @@ func TestNormalizeResponsesInputAsMessagesFunctionCallOutput(t *testing.T) {
 	}
 }
 
+func TestNormalizeResponsesInputAsMessagesBackfillsToolResultNameFromCallID(t *testing.T) {
+	msgs := normalizeResponsesInputAsMessages([]any{
+		map[string]any{
+			"type":      "function_call",
+			"call_id":   "call_999",
+			"name":      "search",
+			"arguments": `{"q":"golang"}`,
+		},
+		map[string]any{
+			"type":    "function_call_output",
+			"call_id": "call_999",
+			"output":  map[string]any{"ok": true},
+		},
+	})
+	if len(msgs) != 2 {
+		t.Fatalf("expected two messages, got %d", len(msgs))
+	}
+	toolMsg, _ := msgs[1].(map[string]any)
+	if toolMsg["role"] != "tool" {
+		t.Fatalf("expected tool role, got %#v", toolMsg)
+	}
+	if toolMsg["name"] != "search" {
+		t.Fatalf("expected tool name backfilled from call_id, got %#v", toolMsg["name"])
+	}
+}
+
 func TestNormalizeResponsesInputAsMessagesFunctionCallItem(t *testing.T) {
 	msgs := normalizeResponsesInputAsMessages([]any{
 		map[string]any{
@@ -106,6 +132,27 @@ func TestNormalizeResponsesInputAsMessagesFunctionCallItem(t *testing.T) {
 	}
 	if fn["arguments"] != `{"q":"golang"}` {
 		t.Fatalf("expected call arguments preserved, got %#v", call)
+	}
+}
+
+func TestNormalizeResponsesInputAsMessagesFunctionCallItemRepairsConcatenatedArguments(t *testing.T) {
+	msgs := normalizeResponsesInputAsMessages([]any{
+		map[string]any{
+			"type":      "function_call",
+			"call_id":   "call_456",
+			"name":      "search",
+			"arguments": `{}{"q":"golang"}`,
+		},
+	})
+	if len(msgs) != 1 {
+		t.Fatalf("expected one message, got %d", len(msgs))
+	}
+	m, _ := msgs[0].(map[string]any)
+	toolCalls, _ := m["tool_calls"].([]any)
+	call, _ := toolCalls[0].(map[string]any)
+	fn, _ := call["function"].(map[string]any)
+	if fn["arguments"] != `{"q":"golang"}` {
+		t.Fatalf("expected concatenated call arguments repaired, got %#v", fn["arguments"])
 	}
 }
 

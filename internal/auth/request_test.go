@@ -130,6 +130,39 @@ func TestDetermineWithQueryKeyUsesDirectToken(t *testing.T) {
 	}
 }
 
+func TestDetermineWithXGoogAPIKeyUsesDirectToken(t *testing.T) {
+	r := newTestResolver(t)
+	req, _ := http.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:streamGenerateContent?alt=sse", nil)
+	req.Header.Set("x-goog-api-key", "goog-header-key")
+
+	a, err := r.Determine(req)
+	if err != nil {
+		t.Fatalf("determine failed: %v", err)
+	}
+	if a.UseConfigToken {
+		t.Fatalf("expected direct token mode")
+	}
+	if a.DeepSeekToken != "goog-header-key" {
+		t.Fatalf("unexpected token: %q", a.DeepSeekToken)
+	}
+}
+
+func TestDetermineWithAPIKeyQueryParamUsesDirectToken(t *testing.T) {
+	r := newTestResolver(t)
+	req, _ := http.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent?api_key=direct-api-key", nil)
+
+	a, err := r.Determine(req)
+	if err != nil {
+		t.Fatalf("determine failed: %v", err)
+	}
+	if a.UseConfigToken {
+		t.Fatalf("expected direct token mode")
+	}
+	if a.DeepSeekToken != "direct-api-key" {
+		t.Fatalf("unexpected token: %q", a.DeepSeekToken)
+	}
+}
+
 func TestDetermineHeaderTokenPrecedenceOverQueryKey(t *testing.T) {
 	r := newTestResolver(t)
 	req, _ := http.NewRequest(http.MethodPost, "/v1beta/models/gemini-2.5-pro:generateContent?key=query-key", nil)

@@ -135,11 +135,12 @@ docker-compose up -d --build
 
 ### 2.3 Docker 架构说明
 
-`Dockerfile` 使用三阶段构建：
+`Dockerfile` 提供两条构建路径：
 
-1. **WebUI 构建阶段**：`node:20` 镜像，执行 `npm ci && npm run build`
-2. **Go 构建阶段**：`golang:1.24` 镜像，编译二进制文件
-3. **运行阶段**：`debian:bookworm-slim` 精简镜像
+1. **本地/开发默认路径（`runtime-from-source`）**：三阶段构建（WebUI 构建 + Go 构建 + 运行阶段）。
+2. **Release 路径（`runtime-from-dist`）**：CI 先生成 `dist/ds2api_<tag>_linux_<arch>.tar.gz`，再由 Docker 直接复用该发布包内的二进制和 `static/admin` 产物组装运行镜像，不再重复执行 `npm build`/`go build`。
+
+Release 路径可确保 Docker 镜像与 release 压缩包使用同一套产物，减少重复构建带来的差异。
 
 容器内启动命令：`/usr/local/bin/ds2api`，默认暴露端口 `5001`。
 
@@ -160,7 +161,7 @@ Docker Compose 已配置内置健康检查：
 
 ```yaml
 healthcheck:
-  test: ["CMD", "wget", "-qO-", "http://localhost:${PORT:-5001}/healthz"]
+  test: ["CMD", "/usr/local/bin/busybox", "wget", "-qO-", "http://localhost:${PORT:-5001}/healthz"]
   interval: 30s
   timeout: 10s
   retries: 3
@@ -233,6 +234,8 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # 个人账号可留空
 | `DS2API_ACCOUNT_CONCURRENCY` | 同上（兼容别名） | — |
 | `DS2API_ACCOUNT_MAX_QUEUE` | 等待队列上限 | `recommended_concurrency` |
 | `DS2API_ACCOUNT_QUEUE_SIZE` | 同上（兼容别名） | — |
+| `DS2API_GLOBAL_MAX_INFLIGHT` | 全局并发上限 | `recommended_concurrency` |
+| `DS2API_MAX_INFLIGHT` | 同上（兼容别名） | — |
 | `DS2API_VERCEL_INTERNAL_SECRET` | 混合流式内部鉴权 | 回退用 `DS2API_ADMIN_KEY` |
 | `DS2API_VERCEL_STREAM_LEASE_TTL_SECONDS` | 流式 lease TTL | `900` |
 | `VERCEL_TOKEN` | Vercel 同步 token | — |
@@ -339,6 +342,7 @@ No Output Directory named "public" found after the Build completed.
 
 - **触发条件**：仅在 Release `published` 时触发（普通 push 不会构建）
 - **构建产物**：多平台二进制压缩包 + `sha256sums.txt`
+- **容器镜像发布**：仅发布到 GHCR（`ghcr.io/cjackhwang/ds2api`）
 
 | 平台 | 架构 | 文件格式 |
 | --- | --- | --- |
@@ -359,8 +363,8 @@ No Output Directory named "public" found after the Build completed.
 ```bash
 # 1. 下载对应平台的压缩包
 # 2. 解压
-tar -xzf ds2api_v1.7.0_linux_amd64.tar.gz
-cd ds2api_v1.7.0_linux_amd64
+tar -xzf ds2api_<tag>_linux_amd64.tar.gz
+cd ds2api_<tag>_linux_amd64
 
 # 3. 配置
 cp config.example.json config.json
@@ -372,9 +376,19 @@ cp config.example.json config.json
 
 ### 维护者发布步骤
 
-1. 在 GitHub 创建并发布 Release（带 tag，如 `v1.7.0`）
+1. 在 GitHub 创建并发布 Release（带 tag，如 `vX.Y.Z`）
 2. 等待 Actions 工作流 `Release Artifacts` 完成
 3. 在 Release 的 Assets 下载对应平台压缩包
+
+### 拉取 GHCR 镜像（可选）
+
+```bash
+# latest
+docker pull ghcr.io/cjackhwang/ds2api:latest
+
+# 指定版本（示例）
+docker pull ghcr.io/cjackhwang/ds2api:v2.1.2
+```
 
 ---
 

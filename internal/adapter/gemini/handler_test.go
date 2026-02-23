@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -171,4 +172,45 @@ func TestStreamGenerateContentEmitsSSE(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `"finishReason":"STOP"`) {
 		t.Fatalf("expected stream finish frame, got body=%s", rec.Body.String())
 	}
+
+	frames := extractGeminiSSEFrames(t, rec.Body.String())
+	if len(frames) == 0 {
+		t.Fatalf("expected non-empty sse frames, body=%s", rec.Body.String())
+	}
+	last := frames[len(frames)-1]
+	candidates, _ := last["candidates"].([]any)
+	if len(candidates) == 0 {
+		t.Fatalf("expected finish frame candidates, got %#v", last)
+	}
+	c0, _ := candidates[0].(map[string]any)
+	content, _ := c0["content"].(map[string]any)
+	if content == nil {
+		t.Fatalf("expected non-null content in finish frame, got %#v", c0)
+	}
+	parts, _ := content["parts"].([]any)
+	if len(parts) == 0 {
+		t.Fatalf("expected non-empty parts in finish frame content, got %#v", content)
+	}
+}
+
+func extractGeminiSSEFrames(t *testing.T, body string) []map[string]any {
+	t.Helper()
+	scanner := bufio.NewScanner(strings.NewReader(body))
+	out := make([]map[string]any, 0, 4)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		raw := strings.TrimSpace(strings.TrimPrefix(line, "data: "))
+		if raw == "" {
+			continue
+		}
+		var frame map[string]any
+		if err := json.Unmarshal([]byte(raw), &frame); err != nil {
+			continue
+		}
+		out = append(out, frame)
+	}
+	return out
 }

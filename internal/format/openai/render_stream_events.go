@@ -1,0 +1,136 @@
+package openai
+
+import "strings"
+
+func BuildResponsesCreatedPayload(responseID, model string) map[string]any {
+	return map[string]any{
+		"type":        "response.created",
+		"id":          responseID,
+		"response_id": responseID,
+		"object":      "response",
+		"model":       model,
+		"status":      "in_progress",
+	}
+}
+
+func BuildResponsesOutputItemAddedPayload(responseID, itemID string, outputIndex int, item map[string]any) map[string]any {
+	return map[string]any{
+		"type":         "response.output_item.added",
+		"id":           responseID,
+		"response_id":  responseID,
+		"output_index": outputIndex,
+		"item_id":      itemID,
+		"item":         item,
+	}
+}
+
+func BuildResponsesOutputItemDonePayload(responseID, itemID string, outputIndex int, item map[string]any) map[string]any {
+	return map[string]any{
+		"type":         "response.output_item.done",
+		"id":           responseID,
+		"response_id":  responseID,
+		"output_index": outputIndex,
+		"item_id":      itemID,
+		"item":         item,
+	}
+}
+
+func BuildResponsesContentPartAddedPayload(responseID, itemID string, outputIndex, contentIndex int, part map[string]any) map[string]any {
+	return map[string]any{
+		"type":          "response.content_part.added",
+		"id":            responseID,
+		"response_id":   responseID,
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": contentIndex,
+		"part":          part,
+	}
+}
+
+func BuildResponsesContentPartDonePayload(responseID, itemID string, outputIndex, contentIndex int, part map[string]any) map[string]any {
+	return map[string]any{
+		"type":          "response.content_part.done",
+		"id":            responseID,
+		"response_id":   responseID,
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": contentIndex,
+		"part":          part,
+	}
+}
+
+func BuildResponsesTextDeltaPayload(responseID, itemID string, outputIndex, contentIndex int, delta string) map[string]any {
+	return map[string]any{
+		"type":          "response.output_text.delta",
+		"id":            responseID,
+		"response_id":   responseID,
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": contentIndex,
+		"delta":         delta,
+	}
+}
+
+func BuildResponsesReasoningDeltaPayload(responseID, delta string) map[string]any {
+	return map[string]any{
+		"type":        "response.reasoning.delta",
+		"id":          responseID,
+		"response_id": responseID,
+		"delta":       delta,
+	}
+}
+
+func BuildResponsesFunctionCallArgumentsDeltaPayload(responseID, itemID string, outputIndex int, callID, delta string) map[string]any {
+	return map[string]any{
+		"type":         "response.function_call_arguments.delta",
+		"id":           responseID,
+		"response_id":  responseID,
+		"item_id":      itemID,
+		"output_index": outputIndex,
+		"call_id":      callID,
+		"delta":        delta,
+	}
+}
+
+func BuildResponsesFunctionCallArgumentsDonePayload(responseID, itemID string, outputIndex int, callID, name, arguments string) map[string]any {
+	return map[string]any{
+		"type":         "response.function_call_arguments.done",
+		"id":           responseID,
+		"response_id":  responseID,
+		"item_id":      itemID,
+		"output_index": outputIndex,
+		"call_id":      callID,
+		"name":         name,
+		"arguments":    normalizeJSONString(arguments),
+	}
+}
+
+func BuildResponsesFailedPayload(responseID, model, message, code string) map[string]any {
+	code = strings.TrimSpace(code)
+	if code == "" {
+		code = "api_error"
+	}
+	return map[string]any{
+		"type":        "response.failed",
+		"id":          responseID,
+		"response_id": responseID,
+		"object":      "response",
+		"model":       model,
+		"status":      "failed",
+		"error": map[string]any{
+			"message": message,
+			"type":    "invalid_request_error",
+			"code":    code,
+			"param":   nil,
+		},
+	}
+}
+
+func BuildResponsesCompletedPayload(response map[string]any) map[string]any {
+	responseID, _ := response["id"].(string)
+	return map[string]any{
+		"type":        "response.completed",
+		"response_id": responseID,
+		"response":    response,
+	}
+}
