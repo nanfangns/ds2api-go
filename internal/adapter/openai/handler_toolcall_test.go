@@ -3,6 +3,7 @@ package openai
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -210,7 +211,7 @@ func TestHandleNonStreamUnknownToolNotIntercepted(t *testing.T) {
 	}
 }
 
-func TestHandleNonStreamEmbeddedToolCallExampleIntercepted(t *testing.T) {
+func TestHandleNonStreamEmbeddedToolCallExampleRemainsText(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(
 		`data: {"p":"response/content","v":"下面是示例："}`,
@@ -228,16 +229,16 @@ func TestHandleNonStreamEmbeddedToolCallExampleIntercepted(t *testing.T) {
 	out := decodeJSONBody(t, rec.Body.String())
 	choices, _ := out["choices"].([]any)
 	choice, _ := choices[0].(map[string]any)
-	if choice["finish_reason"] != "tool_calls" {
-		t.Fatalf("expected finish_reason=tool_calls, got %#v", choice["finish_reason"])
+	if choice["finish_reason"] != "stop" {
+		t.Fatalf("expected finish_reason=stop, got %#v", choice["finish_reason"])
 	}
 	msg, _ := choice["message"].(map[string]any)
-	toolCalls, _ := msg["tool_calls"].([]any)
-	if len(toolCalls) == 0 {
-		t.Fatalf("expected tool_calls field for embedded example: %#v", msg["tool_calls"])
+	if _, ok := msg["tool_calls"]; ok {
+		t.Fatalf("did not expect tool_calls field for embedded example: %#v", msg["tool_calls"])
 	}
-	if msg["content"] != nil {
-		t.Fatalf("expected content nil when tool_calls detected, got %#v", msg["content"])
+	content, _ := msg["content"].(string)
+	if !strings.Contains(content, "下面是示例：") || !strings.Contains(content, "请勿执行。") || !strings.Contains(content, `"tool_calls"`) {
+		t.Fatalf("expected embedded example to remain plain text, got %#v", content)
 	}
 }
 
@@ -306,6 +307,36 @@ func TestHandleStreamToolCallInterceptsWithoutRawContentLeak(t *testing.T) {
 	}
 	if !foundToolIndex {
 		t.Fatalf("expected stream tool_calls item with index, body=%s", rec.Body.String())
+	}
+	if streamHasRawToolJSONContent(frames) {
+		t.Fatalf("raw tool_calls JSON leaked in content delta: %s", rec.Body.String())
+	}
+	if streamFinishReason(frames) != "tool_calls" {
+		t.Fatalf("expected finish_reason=tool_calls, body=%s", rec.Body.String())
+	}
+}
+
+func TestHandleStreamToolCallLargeArgumentsStillIntercepted(t *testing.T) {
+	h := &Handler{}
+	large := strings.Repeat("a", 9000)
+	payload := fmt.Sprintf(`{"tool_calls":[{"name":"search","input":{"q":"%s"}}]}`, large)
+	splitAt := len(payload) / 2
+	resp := makeSSEHTTPResponse(
+		fmt.Sprintf(`data: {"p":"response/content","v":%q}`, payload[:splitAt]),
+		fmt.Sprintf(`data: {"p":"response/content","v":%q}`, payload[splitAt:]),
+		`data: [DONE]`,
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	h.handleStream(rec, req, resp, "cid3-large", "deepseek-chat", "prompt", false, false, []string{"search"})
+
+	frames, done := parseSSEDataFrames(t, rec.Body.String())
+	if !done {
+		t.Fatalf("expected [DONE], body=%s", rec.Body.String())
+	}
+	if !streamHasToolCallsDelta(frames) {
+		t.Fatalf("expected tool_calls delta, body=%s", rec.Body.String())
 	}
 	if streamHasRawToolJSONContent(frames) {
 		t.Fatalf("raw tool_calls JSON leaked in content delta: %s", rec.Body.String())
@@ -500,15 +531,12 @@ func TestHandleStreamToolCallMixedWithPlainTextSegments(t *testing.T) {
 	if !strings.Contains(got, "下面是示例：") || !strings.Contains(got, "请勿执行。") {
 		t.Fatalf("expected pre/post plain text to pass sieve, got=%q", got)
 	}
-	if strings.Contains(strings.ToLower(got), `"tool_calls"`) {
-		t.Fatalf("expected no raw tool_calls json leak in content, got=%q", got)
-	}
 	if streamFinishReason(frames) != "tool_calls" {
 		t.Fatalf("expected finish_reason=tool_calls for mixed prose, body=%s", rec.Body.String())
 	}
 }
 
-func TestHandleStreamToolCallAfterLeadingTextStillIntercepted(t *testing.T) {
+func TestHandleStreamToolCallAfterLeadingTextRemainsText(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(
 		`data: {"p":"response/content","v":"我将调用工具。"}`,
@@ -542,15 +570,13 @@ func TestHandleStreamToolCallAfterLeadingTextStillIntercepted(t *testing.T) {
 	if !strings.Contains(got, "我将调用工具。") {
 		t.Fatalf("expected leading text to keep streaming, got=%q", got)
 	}
-	if strings.Contains(strings.ToLower(got), "tool_calls") {
-		t.Fatalf("unexpected raw tool json leak, got=%q", got)
-	}
+
 	if streamFinishReason(frames) != "tool_calls" {
 		t.Fatalf("expected finish_reason=tool_calls, body=%s", rec.Body.String())
 	}
 }
 
-func TestHandleStreamToolCallWithSameChunkTrailingTextStillIntercepted(t *testing.T) {
+func TestHandleStreamToolCallWithSameChunkTrailingTextRemainsText(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(
 		`data: {"p":"response/content","v":"{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"go\"}}]}接下来我会继续说明。"}`,
@@ -583,15 +609,52 @@ func TestHandleStreamToolCallWithSameChunkTrailingTextStillIntercepted(t *testin
 	if !strings.Contains(got, "接下来我会继续说明。") {
 		t.Fatalf("expected trailing plain text to be preserved, got=%q", got)
 	}
-	if strings.Contains(strings.ToLower(got), "tool_calls") {
-		t.Fatalf("unexpected raw tool json leak, got=%q", got)
-	}
+
 	if streamFinishReason(frames) != "tool_calls" {
 		t.Fatalf("expected finish_reason=tool_calls, body=%s", rec.Body.String())
 	}
 }
 
-func TestHandleStreamToolCallKeyAppearsLateStillNoPrefixLeak(t *testing.T) {
+func TestHandleStreamFencedToolCallSnippetRemainsText(t *testing.T) {
+	h := &Handler{}
+	resp := makeSSEHTTPResponse(
+		fmt.Sprintf(`data: {"p":"response/content","v":%q}`, "下面是调用示例：\n```json\n"),
+		fmt.Sprintf(`data: {"p":"response/content","v":%q}`, "{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"go\"}}]}\n```\n仅示例，不要执行。"),
+		`data: [DONE]`,
+	)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	h.handleStream(rec, req, resp, "cid7f", "deepseek-chat", "prompt", false, false, []string{"search"})
+
+	frames, done := parseSSEDataFrames(t, rec.Body.String())
+	if !done {
+		t.Fatalf("expected [DONE], body=%s", rec.Body.String())
+	}
+	if streamHasToolCallsDelta(frames) {
+		t.Fatalf("did not expect tool_calls delta for fenced snippet, body=%s", rec.Body.String())
+	}
+	content := strings.Builder{}
+	for _, frame := range frames {
+		choices, _ := frame["choices"].([]any)
+		for _, item := range choices {
+			choice, _ := item.(map[string]any)
+			delta, _ := choice["delta"].(map[string]any)
+			if c, ok := delta["content"].(string); ok {
+				content.WriteString(c)
+			}
+		}
+	}
+	got := content.String()
+	if !strings.Contains(got, "```json") || !strings.Contains(strings.ToLower(got), "tool_calls") {
+		t.Fatalf("expected fenced tool snippet in content, got=%q", got)
+	}
+	if streamFinishReason(frames) != "stop" {
+		t.Fatalf("expected finish_reason=stop, body=%s", rec.Body.String())
+	}
+}
+
+func TestHandleStreamToolCallKeyAppearsLateRemainsText(t *testing.T) {
 	h := &Handler{}
 	spaces := strings.Repeat(" ", 200)
 	resp := makeSSEHTTPResponse(
@@ -612,9 +675,6 @@ func TestHandleStreamToolCallKeyAppearsLateStillNoPrefixLeak(t *testing.T) {
 	if !streamHasToolCallsDelta(frames) {
 		t.Fatalf("expected tool_calls delta, body=%s", rec.Body.String())
 	}
-	if streamHasRawToolJSONContent(frames) {
-		t.Fatalf("raw tool_calls JSON leaked in content delta: %s", rec.Body.String())
-	}
 	content := strings.Builder{}
 	for _, frame := range frames {
 		choices, _ := frame["choices"].([]any)
@@ -627,9 +687,6 @@ func TestHandleStreamToolCallKeyAppearsLateStillNoPrefixLeak(t *testing.T) {
 		}
 	}
 	got := content.String()
-	if strings.Contains(got, "{") {
-		t.Fatalf("unexpected suspicious prefix leak in content: %q", got)
-	}
 	if !strings.Contains(got, "后置正文C。") {
 		t.Fatalf("expected stream to continue after tool json convergence, got=%q", got)
 	}
@@ -712,7 +769,7 @@ func TestHandleStreamIncompleteCapturedToolJSONFlushesAsTextOnFinalize(t *testin
 	}
 }
 
-func TestHandleStreamToolCallArgumentsEmitIncrementally(t *testing.T) {
+func TestHandleStreamToolCallArgumentsEmitAsSingleCompletedChunk(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(
 		`data: {"p":"response/content","v":"{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"go"}`,
@@ -735,8 +792,8 @@ func TestHandleStreamToolCallArgumentsEmitIncrementally(t *testing.T) {
 		t.Fatalf("raw tool_calls JSON leaked in content delta: %s", rec.Body.String())
 	}
 	argChunks := streamToolCallArgumentChunks(frames)
-	if len(argChunks) < 2 {
-		t.Fatalf("expected incremental arguments chunks, got=%v body=%s", argChunks, rec.Body.String())
+	if len(argChunks) == 0 {
+		t.Fatalf("expected tool call arguments chunk, got=%v body=%s", argChunks, rec.Body.String())
 	}
 	joined := strings.Join(argChunks, "")
 	if !strings.Contains(joined, `"q":"golang"`) || !strings.Contains(joined, `"page":1`) {

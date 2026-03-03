@@ -3,7 +3,6 @@ package openai
 import (
 	"encoding/json"
 	"fmt"
-	"io"
 	"strings"
 
 	"ds2api/internal/config"
@@ -34,9 +33,9 @@ func normalizeOpenAIMessagesForPrompt(raw []any, traceID string) []map[string]an
 				"role":    "user",
 				"content": formatToolResultForPrompt(msg),
 			})
-		case "user", "system":
+		case "user", "system", "developer":
 			out = append(out, map[string]any{
-				"role":    role,
+				"role":    normalizeOpenAIRoleForPrompt(role),
 				"content": normalizeOpenAIContentForPrompt(msg["content"]),
 			})
 		default:
@@ -48,7 +47,7 @@ func normalizeOpenAIMessagesForPrompt(raw []any, traceID string) []map[string]an
 				role = "user"
 			}
 			out = append(out, map[string]any{
-				"role":    role,
+				"role":    normalizeOpenAIRoleForPrompt(role),
 				"content": content,
 			})
 		}
@@ -175,30 +174,11 @@ func normalizeToolArgumentString(raw string) string {
 	if trimmed == "" {
 		return ""
 	}
-	if !looksLikeConcatenatedJSON(trimmed) {
-		return trimmed
+	if looksLikeConcatenatedJSON(trimmed) {
+		// Keep original payload to avoid silent argument rewrites.
+		return raw
 	}
-	dec := json.NewDecoder(strings.NewReader(trimmed))
-	values := make([]any, 0, 2)
-	for {
-		var v any
-		if err := dec.Decode(&v); err != nil {
-			if err == io.EOF {
-				break
-			}
-			return trimmed
-		}
-		values = append(values, v)
-	}
-	if len(values) < 2 {
-		return trimmed
-	}
-	last := values[len(values)-1]
-	b, err := json.Marshal(last)
-	if err != nil || len(b) == 0 {
-		return trimmed
-	}
-	return string(b)
+	return trimmed
 }
 
 func marshalToPromptString(v any) string {
@@ -207,6 +187,14 @@ func marshalToPromptString(v any) string {
 		return strings.TrimSpace(fmt.Sprintf("%v", v))
 	}
 	return string(b)
+}
+
+func normalizeOpenAIRoleForPrompt(role string) string {
+	role = strings.ToLower(strings.TrimSpace(role))
+	if role == "developer" {
+		return "system"
+	}
+	return role
 }
 
 func asString(v any) string {

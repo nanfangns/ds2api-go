@@ -265,3 +265,57 @@ func TestConfigImportRejectsMergedRuntimeConflict(t *testing.T) {
 		t.Fatalf("runtime should remain unchanged, runtime=%+v", snap.Runtime)
 	}
 }
+
+func TestConfigImportMergeDedupesMobileAliases(t *testing.T) {
+	h := newAdminTestHandler(t, `{
+		"keys":["k1"],
+		"accounts":[{"mobile":"+8613800138000","password":"p1"}]
+	}`)
+
+	merge := map[string]any{
+		"mode": "merge",
+		"config": map[string]any{
+			"accounts": []any{
+				map[string]any{"mobile": "13800138000", "password": "p2"},
+			},
+		},
+	}
+	b, _ := json.Marshal(merge)
+	req := httptest.NewRequest(http.MethodPost, "/admin/config/import?mode=merge", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.configImport(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := len(h.Store.Accounts()); got != 1 {
+		t.Fatalf("expected merge dedupe by canonical mobile, got=%d", got)
+	}
+}
+
+func TestUpdateConfigDedupesMobileAliases(t *testing.T) {
+	h := newAdminTestHandler(t, `{
+		"keys":["k1"],
+		"accounts":[{"mobile":"+8613800138000","password":"old"}]
+	}`)
+
+	reqBody := map[string]any{
+		"accounts": []any{
+			map[string]any{"mobile": "+8613800138000"},
+			map[string]any{"mobile": "13800138000"},
+		},
+	}
+	b, _ := json.Marshal(reqBody)
+	req := httptest.NewRequest(http.MethodPost, "/admin/config", bytes.NewReader(b))
+	rec := httptest.NewRecorder()
+	h.updateConfig(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
+	}
+	accounts := h.Store.Accounts()
+	if len(accounts) != 1 {
+		t.Fatalf("expected update dedupe by canonical mobile, got=%d", len(accounts))
+	}
+	if accounts[0].Identifier() != "+8613800138000" {
+		t.Fatalf("unexpected identifier: %q", accounts[0].Identifier())
+	}
+}

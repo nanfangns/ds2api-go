@@ -59,9 +59,11 @@ func toStringSlice(v any) ([]string, bool) {
 }
 
 func toAccount(m map[string]any) config.Account {
+	email := fieldString(m, "email")
+	mobile := config.NormalizeMobileForStorage(fieldString(m, "mobile"))
 	return config.Account{
-		Email:    fieldString(m, "email"),
-		Mobile:   fieldString(m, "mobile"),
+		Email:    email,
+		Mobile:   mobile,
 		Password: fieldString(m, "password"),
 		Token:    fieldString(m, "token"),
 	}
@@ -90,10 +92,50 @@ func accountMatchesIdentifier(acc config.Account, identifier string) bool {
 	if strings.TrimSpace(acc.Email) == id {
 		return true
 	}
-	if strings.TrimSpace(acc.Mobile) == id {
+	if mobileKey := config.CanonicalMobileKey(id); mobileKey != "" && mobileKey == config.CanonicalMobileKey(acc.Mobile) {
 		return true
 	}
 	return acc.Identifier() == id
+}
+
+func normalizeAccountForStorage(acc config.Account) config.Account {
+	acc.Email = strings.TrimSpace(acc.Email)
+	acc.Mobile = config.NormalizeMobileForStorage(acc.Mobile)
+	return acc
+}
+
+func accountDedupeKey(acc config.Account) string {
+	if email := strings.TrimSpace(acc.Email); email != "" {
+		return "email:" + email
+	}
+	if mobile := config.CanonicalMobileKey(acc.Mobile); mobile != "" {
+		return "mobile:" + mobile
+	}
+	if id := strings.TrimSpace(acc.Identifier()); id != "" {
+		return "id:" + id
+	}
+	return ""
+}
+
+func normalizeAndDedupeAccounts(accounts []config.Account) []config.Account {
+	if len(accounts) == 0 {
+		return nil
+	}
+	out := make([]config.Account, 0, len(accounts))
+	seen := make(map[string]struct{}, len(accounts))
+	for _, acc := range accounts {
+		acc = normalizeAccountForStorage(acc)
+		key := accountDedupeKey(acc)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, acc)
+	}
+	return out
 }
 
 func findAccountByIdentifier(store ConfigStore, identifier string) (config.Account, bool) {

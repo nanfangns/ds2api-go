@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
@@ -24,8 +25,21 @@ func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
 		pageSize = 100
 	}
 	accounts := h.Store.Snapshot().Accounts
-	total := len(accounts)
 	reverseAccounts(accounts)
+	q := strings.TrimSpace(strings.ToLower(r.URL.Query().Get("q")))
+	if q != "" {
+		filtered := make([]config.Account, 0, len(accounts))
+		for _, acc := range accounts {
+			id := strings.ToLower(acc.Identifier())
+			if strings.Contains(id, q) ||
+				strings.Contains(strings.ToLower(acc.Email), q) ||
+				strings.Contains(strings.ToLower(acc.Mobile), q) {
+				filtered = append(filtered, acc)
+			}
+		}
+		accounts = filtered
+	}
+	total := len(accounts)
 	totalPages := 1
 	if total > 0 {
 		totalPages = (total + pageSize - 1) / pageSize
@@ -71,11 +85,12 @@ func (h *Handler) addAccount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	err := h.Store.Update(func(c *config.Config) error {
+		mobileKey := config.CanonicalMobileKey(acc.Mobile)
 		for _, a := range c.Accounts {
 			if acc.Email != "" && a.Email == acc.Email {
 				return fmt.Errorf("邮箱已存在")
 			}
-			if acc.Mobile != "" && a.Mobile == acc.Mobile {
+			if mobileKey != "" && config.CanonicalMobileKey(a.Mobile) == mobileKey {
 				return fmt.Errorf("手机号已存在")
 			}
 		}
@@ -92,6 +107,9 @@ func (h *Handler) addAccount(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request) {
 	identifier := chi.URLParam(r, "identifier")
+	if decoded, err := url.PathUnescape(identifier); err == nil {
+		identifier = decoded
+	}
 	err := h.Store.Update(func(c *config.Config) error {
 		idx := -1
 		for i, a := range c.Accounts {

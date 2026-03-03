@@ -10,8 +10,8 @@ func (a Account) Identifier() string {
 	if strings.TrimSpace(a.Email) != "" {
 		return strings.TrimSpace(a.Email)
 	}
-	if strings.TrimSpace(a.Mobile) != "" {
-		return strings.TrimSpace(a.Mobile)
+	if mobile := NormalizeMobileForStorage(a.Mobile); mobile != "" {
+		return mobile
 	}
 	// Backward compatibility: old configs may contain token-only accounts.
 	// Use a stable non-sensitive synthetic id so they can still join the pool.

@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/ds2api-icon.svg" width="128" height="128" alt="DS2API icon" />
+  <img src="webui/public/ds2api-favicon.svg" width="128" height="128" alt="DS2API icon" />
 </p>
 
 # DS2API
@@ -10,6 +10,7 @@
 [![Release](https://img.shields.io/github/v/release/CJackHwang/ds2api?display_name=tag)](https://github.com/CJackHwang/ds2api/releases)
 [![Docker](https://img.shields.io/badge/docker-ready-blue.svg)](DEPLOY.md)
 [![Deploy on Zeabur](https://zeabur.com/button.svg)](https://zeabur.com/templates/L4CFHP)
+[![Deploy with Vercel](https://vercel.com/button)](https://vercel.com/new/clone?repository-url=https://github.com/CJackHwang/ds2api)
 
 语言 / Language: [中文](README.MD) | [English](README.en.md)
 

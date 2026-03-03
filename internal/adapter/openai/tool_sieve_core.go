@@ -14,6 +14,11 @@ func processToolSieveChunk(state *toolStreamSieveState, chunk string, toolNames 
 		state.pending.WriteString(chunk)
 	}
 	events := make([]toolStreamEvent, 0, 2)
+	if len(state.pendingToolCalls) > 0 {
+		events = append(events, toolStreamEvent{ToolCalls: state.pendingToolCalls})
+		state.pendingToolRaw = ""
+		state.pendingToolCalls = nil
+	}
 
 	for {
 		if state.capturing {
@@ -21,31 +26,29 @@ func processToolSieveChunk(state *toolStreamSieveState, chunk string, toolNames 
 				state.capture.WriteString(state.pending.String())
 				state.pending.Reset()
 			}
-			if deltas := buildIncrementalToolDeltas(state); len(deltas) > 0 {
-				events = append(events, toolStreamEvent{ToolCallDeltas: deltas})
-			}
 			prefix, calls, suffix, ready := consumeToolCapture(state, toolNames)
 			if !ready {
-				if state.capture.Len() > toolSieveCaptureLimit {
-					content := state.capture.String()
-					state.capture.Reset()
-					state.capturing = false
-					state.resetIncrementalToolState()
-					state.noteText(content)
-					events = append(events, toolStreamEvent{Content: content})
-					continue
-				}
 				break
 			}
+			captured := state.capture.String()
 			state.capture.Reset()
 			state.capturing = false
 			state.resetIncrementalToolState()
+			if len(calls) > 0 {
+				if prefix != "" {
+					state.noteText(prefix)
+					events = append(events, toolStreamEvent{Content: prefix})
+				}
+				if suffix != "" {
+					state.pending.WriteString(suffix)
+				}
+				_ = captured
+				state.pendingToolCalls = calls
+				continue
+			}
 			if prefix != "" {
 				state.noteText(prefix)
 				events = append(events, toolStreamEvent{Content: prefix})
-			}
-			if len(calls) > 0 {
-				events = append(events, toolStreamEvent{ToolCalls: calls})
 			}
 			if suffix != "" {
 				state.pending.WriteString(suffix)
@@ -89,6 +92,11 @@ func flushToolSieve(state *toolStreamSieveState, toolNames []string) []toolStrea
 		return nil
 	}
 	events := processToolSieveChunk(state, "", toolNames)
+	if len(state.pendingToolCalls) > 0 {
+		events = append(events, toolStreamEvent{ToolCalls: state.pendingToolCalls})
+		state.pendingToolRaw = ""
+		state.pendingToolCalls = nil
+	}
 	if state.capturing {
 		consumedPrefix, consumedCalls, consumedSuffix, ready := consumeToolCapture(state, toolNames)
 		if ready {

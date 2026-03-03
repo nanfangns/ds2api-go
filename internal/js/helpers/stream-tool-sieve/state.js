@@ -1,6 +1,5 @@
 'use strict';
 
-const TOOL_SIEVE_CAPTURE_LIMIT = 8 * 1024;
 const TOOL_SIEVE_CONTEXT_TAIL_LIMIT = 256;
 
 function createToolSieveState() {
@@ -9,6 +8,9 @@ function createToolSieveState() {
     capture: '',
     capturing: false,
     recentTextTail: '',
+    pendingToolRaw: '',
+    pendingToolCalls: [],
+    disableDeltas: false,
     toolNameSent: false,
     toolName: '',
     toolArgsStart: -1,
@@ -19,6 +21,7 @@ function createToolSieveState() {
 }
 
 function resetIncrementalToolState(state) {
+  state.disableDeltas = false;
   state.toolNameSent = false;
   state.toolName = '';
   state.toolArgsStart = -1;
@@ -78,7 +81,6 @@ function toStringSafe(v) {
 }
 
 module.exports = {
-  TOOL_SIEVE_CAPTURE_LIMIT,
   TOOL_SIEVE_CONTEXT_TAIL_LIMIT,
   createToolSieveState,
   resetIncrementalToolState,

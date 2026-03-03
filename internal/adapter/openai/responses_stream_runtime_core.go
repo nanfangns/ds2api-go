@@ -102,16 +102,11 @@ func (s *responsesStreamRuntime) finalize() {
 
 	if s.bufferToolContent {
 		s.processToolStreamEvents(flushToolSieve(&s.sieve, s.toolNames), true)
-		s.processToolStreamEvents(flushToolSieve(&s.thinkingSieve, s.toolNames), false)
 	}
 
-	textParsed := util.ParseToolCallsDetailed(finalText, s.toolNames)
-	thinkingParsed := util.ParseToolCallsDetailed(finalThinking, s.toolNames)
+	textParsed := util.ParseStandaloneToolCallsDetailed(finalText, s.toolNames)
 	detected := textParsed.Calls
-	if len(detected) == 0 {
-		detected = thinkingParsed.Calls
-	}
-	s.logToolPolicyRejections(textParsed, thinkingParsed)
+	s.logToolPolicyRejections(textParsed)
 
 	if len(detected) > 0 {
 		s.toolCallsEmitted = true
@@ -157,7 +152,7 @@ func (s *responsesStreamRuntime) finalize() {
 	s.sendDone()
 }
 
-func (s *responsesStreamRuntime) logToolPolicyRejections(textParsed, thinkingParsed util.ToolCallParseResult) {
+func (s *responsesStreamRuntime) logToolPolicyRejections(textParsed util.ToolCallParseResult) {
 	logRejected := func(parsed util.ToolCallParseResult, channel string) {
 		rejected := filteredRejectedToolNamesForLog(parsed.RejectedToolNames)
 		if !parsed.RejectedByPolicy || len(rejected) == 0 {
@@ -172,7 +167,6 @@ func (s *responsesStreamRuntime) logToolPolicyRejections(textParsed, thinkingPar
 		)
 	}
 	logRejected(textParsed, "text")
-	logRejected(thinkingParsed, "thinking")
 }
 
 func (s *responsesStreamRuntime) hasFunctionCallDone() bool {
@@ -207,9 +201,6 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 			}
 			s.thinking.WriteString(p.Text)
 			s.sendEvent("response.reasoning.delta", openaifmt.BuildResponsesReasoningDeltaPayload(s.responseID, p.Text))
-			if s.bufferToolContent {
-				s.processToolStreamEvents(processToolSieveChunk(&s.thinkingSieve, p.Text, s.toolNames), false)
-			}
 			continue
 		}
 

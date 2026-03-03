@@ -113,15 +113,10 @@ func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Res
 		return
 	}
 	result := sse.CollectStream(resp, thinkingEnabled, true)
-	textParsed := util.ParseToolCallsDetailed(result.Text, toolNames)
-	thinkingParsed := util.ParseToolCallsDetailed(result.Thinking, toolNames)
+	textParsed := util.ParseStandaloneToolCallsDetailed(result.Text, toolNames)
 	logResponsesToolPolicyRejection(traceID, toolChoice, textParsed, "text")
-	logResponsesToolPolicyRejection(traceID, toolChoice, thinkingParsed, "thinking")
 
 	callCount := len(textParsed.Calls)
-	if callCount == 0 {
-		callCount = len(thinkingParsed.Calls)
-	}
 	if toolChoice.IsRequired() && callCount == 0 {
 		writeOpenAIErrorWithCode(w, http.StatusUnprocessableEntity, "tool_choice requires at least one valid tool call.", "tool_choice_violation")
 		return

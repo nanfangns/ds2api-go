@@ -182,7 +182,7 @@ func TestToAccountAllFields(t *testing.T) {
 	if acc.Email != "user@test.com" {
 		t.Fatalf("unexpected email: %q", acc.Email)
 	}
-	if acc.Mobile != "13800138000" {
+	if acc.Mobile != "+8613800138000" {
 		t.Fatalf("unexpected mobile: %q", acc.Mobile)
 	}
 	if acc.Password != "secret" {

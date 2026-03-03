@@ -49,6 +49,7 @@ func (h *Handler) configImport(w http.ResponseWriter, r *http.Request) {
 		next := c.Clone()
 		if mode == "replace" {
 			next = incoming.Clone()
+			next.Accounts = normalizeAndDedupeAccounts(next.Accounts)
 			next.VercelSyncHash = c.VercelSyncHash
 			next.VercelSyncTime = c.VercelSyncTime
 			importedKeys = len(next.Keys)
@@ -73,17 +74,22 @@ func (h *Handler) configImport(w http.ResponseWriter, r *http.Request) {
 
 			existingAccounts := map[string]struct{}{}
 			for _, acc := range next.Accounts {
-				existingAccounts[acc.Identifier()] = struct{}{}
+				acc = normalizeAccountForStorage(acc)
+				key := accountDedupeKey(acc)
+				if key != "" {
+					existingAccounts[key] = struct{}{}
+				}
 			}
 			for _, acc := range incoming.Accounts {
-				id := acc.Identifier()
-				if id == "" {
+				acc = normalizeAccountForStorage(acc)
+				key := accountDedupeKey(acc)
+				if key == "" {
 					continue
 				}
-				if _, ok := existingAccounts[id]; ok {
+				if _, ok := existingAccounts[key]; ok {
 					continue
 				}
-				existingAccounts[id] = struct{}{}
+				existingAccounts[key] = struct{}{}
 				next.Accounts = append(next.Accounts, acc)
 				importedAccounts++
 			}

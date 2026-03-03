@@ -99,9 +99,6 @@ func TestHandleResponsesStreamUsesOfficialOutputItemEvents(t *testing.T) {
 	if !strings.Contains(body, "event: response.output_item.done") {
 		t.Fatalf("expected response.output_item.done event, body=%s", body)
 	}
-	if !strings.Contains(body, "event: response.function_call_arguments.delta") {
-		t.Fatalf("expected response.function_call_arguments.delta event, body=%s", body)
-	}
 	if !strings.Contains(body, "event: response.function_call_arguments.done") {
 		t.Fatalf("expected response.function_call_arguments.done event, body=%s", body)
 	}
@@ -266,7 +263,7 @@ func TestHandleResponsesStreamOutputTextDeltaCarriesItemIndexes(t *testing.T) {
 	}
 }
 
-func TestHandleResponsesStreamThinkingTextAndToolUseDistinctOutputIndexes(t *testing.T) {
+func TestHandleResponsesStreamThinkingAndMixedToolExampleRemainMessageOnly(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	rec := httptest.NewRecorder()
@@ -291,23 +288,8 @@ func TestHandleResponsesStreamThinkingTextAndToolUseDistinctOutputIndexes(t *tes
 	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-reasoner", "prompt", true, false, []string{"read_file"}, util.DefaultToolChoicePolicy(), "")
 
 	addedPayloads := extractAllSSEEventPayloads(rec.Body.String(), "response.output_item.added")
-	if len(addedPayloads) < 2 {
-		t.Fatalf("expected message + function_call output_item.added events, got %d body=%s", len(addedPayloads), rec.Body.String())
-	}
-
-	indexes := map[int]struct{}{}
-	typeByIndex := map[int]string{}
-	addedIDs := map[string]string{}
-	for _, payload := range addedPayloads {
-		item, _ := payload["item"].(map[string]any)
-		itemType := strings.TrimSpace(asString(item["type"]))
-		outputIndex := int(asFloat(payload["output_index"]))
-		if _, exists := indexes[outputIndex]; exists {
-			t.Fatalf("found duplicated output_index=%d for item types=%q and %q payload=%#v", outputIndex, typeByIndex[outputIndex], itemType, payload)
-		}
-		indexes[outputIndex] = struct{}{}
-		typeByIndex[outputIndex] = itemType
-		addedIDs[itemType] = strings.TrimSpace(asString(payload["item_id"]))
+	if len(addedPayloads) < 1 {
+		t.Fatalf("expected at least one output_item.added event, got %d body=%s", len(addedPayloads), rec.Body.String())
 	}
 
 	completedPayload, ok := extractSSEEventPayload(rec.Body.String(), "response.completed")
@@ -316,20 +298,21 @@ func TestHandleResponsesStreamThinkingTextAndToolUseDistinctOutputIndexes(t *tes
 	}
 	responseObj, _ := completedPayload["response"].(map[string]any)
 	output, _ := responseObj["output"].([]any)
-	found := map[string]bool{}
+	hasMessage := false
 	for _, item := range output {
 		m, _ := item.(map[string]any)
-		itemType := strings.TrimSpace(asString(m["type"]))
-		itemID := strings.TrimSpace(asString(m["id"]))
-		if itemType == "" || itemID == "" {
+		if m == nil {
 			continue
 		}
-		if wantID := strings.TrimSpace(addedIDs[itemType]); wantID != "" && wantID == itemID {
-			found[itemType] = true
+		if asString(m["type"]) == "message" {
+			hasMessage = true
+		}
+		if asString(m["type"]) == "function_call" {
+			t.Fatalf("did not expect function_call output for mixed prose tool example, output=%#v", output)
 		}
 	}
-	if !found["message"] || !found["function_call"] {
-		t.Fatalf("expected completed output to contain streamed message/function_call item ids, found=%#v output=%#v", found, output)
+	if !hasMessage {
+		t.Fatalf("expected message output for mixed prose tool example, output=%#v", output)
 	}
 }
 
@@ -360,7 +343,7 @@ func TestHandleResponsesStreamToolChoiceNoneRejectsFunctionCall(t *testing.T) {
 	}
 }
 
-func TestHandleResponsesStreamMalformedToolJSONClosesInProgressFunctionItem(t *testing.T) {
+func TestHandleResponsesStreamMalformedToolJSONFallsBackToText(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	rec := httptest.NewRecorder()
@@ -373,7 +356,7 @@ func TestHandleResponsesStreamMalformedToolJSONClosesInProgressFunctionItem(t *t
 		return "data: " + string(b) + "\n"
 	}
 
-	// invalid JSON (NaN) can still trigger incremental tool deltas before final parse rejects it
+	// invalid JSON (NaN) should remain plain text in strict mode.
 	streamBody := sseLine(`{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"},"x":NaN}]}`) + "data: [DONE]\n"
 	resp := &http.Response{
 		StatusCode: http.StatusOK,
@@ -382,14 +365,11 @@ func TestHandleResponsesStreamMalformedToolJSONClosesInProgressFunctionItem(t *t
 
 	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", false, false, []string{"read_file"}, util.DefaultToolChoicePolicy(), "")
 	body := rec.Body.String()
-	if !strings.Contains(body, "event: response.function_call_arguments.delta") {
-		t.Fatalf("expected response.function_call_arguments.delta event for malformed payload, body=%s", body)
+	if strings.Contains(body, "event: response.function_call_arguments.delta") || strings.Contains(body, "event: response.function_call_arguments.done") {
+		t.Fatalf("did not expect function_call events for malformed payload in strict mode, body=%s", body)
 	}
-	if !strings.Contains(body, "event: response.function_call_arguments.done") {
-		t.Fatalf("expected runtime to close in-progress function_call with done event, body=%s", body)
-	}
-	if !strings.Contains(body, "event: response.output_item.done") {
-		t.Fatalf("expected runtime to close function output item, body=%s", body)
+	if !strings.Contains(body, "event: response.output_text.delta") {
+		t.Fatalf("expected response.output_text.delta for malformed payload, body=%s", body)
 	}
 	if !strings.Contains(body, "event: response.completed") {
 		t.Fatalf("expected response.completed event, body=%s", body)
@@ -421,6 +401,42 @@ func TestHandleResponsesStreamRequiredToolChoiceFailure(t *testing.T) {
 	}
 	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", false, false, []string{"read_file"}, policy, "")
 
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.failed") {
+		t.Fatalf("expected response.failed event for required tool_choice violation, body=%s", body)
+	}
+	if strings.Contains(body, "event: response.completed") {
+		t.Fatalf("did not expect response.completed after failure, body=%s", body)
+	}
+}
+
+func TestHandleResponsesStreamRequiredToolChoiceIgnoresThinkingToolPayload(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	sseLine := func(path, value string) string {
+		b, _ := json.Marshal(map[string]any{
+			"p": path,
+			"v": value,
+		})
+		return "data: " + string(b) + "\n"
+	}
+
+	streamBody := sseLine("response/thinking_content", `{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}`) +
+		sseLine("response/content", "plain text only") +
+		"data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	policy := util.ToolChoicePolicy{
+		Mode:    util.ToolChoiceRequired,
+		Allowed: map[string]struct{}{"read_file": {}},
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", true, false, []string{"read_file"}, policy, "")
 	body := rec.Body.String()
 	if !strings.Contains(body, "event: response.failed") {
 		t.Fatalf("expected response.failed event for required tool_choice violation, body=%s", body)
@@ -506,6 +522,33 @@ func TestHandleResponsesNonStreamRequiredToolChoiceViolation(t *testing.T) {
 	}
 
 	h.handleResponsesNonStream(rec, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", false, []string{"read_file"}, policy, "")
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for required tool_choice violation, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	out := decodeJSONBody(t, rec.Body.String())
+	errObj, _ := out["error"].(map[string]any)
+	if asString(errObj["code"]) != "tool_choice_violation" {
+		t.Fatalf("expected code=tool_choice_violation, got %#v", out)
+	}
+}
+
+func TestHandleResponsesNonStreamRequiredToolChoiceIgnoresThinkingToolPayload(t *testing.T) {
+	h := &Handler{}
+	rec := httptest.NewRecorder()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			`data: {"p":"response/thinking_content","v":"{\"tool_calls\":[{\"name\":\"read_file\",\"input\":{\"path\":\"README.MD\"}}]}"}` + "\n" +
+				`data: {"p":"response/content","v":"plain text only"}` + "\n" +
+				`data: [DONE]` + "\n",
+		)),
+	}
+	policy := util.ToolChoicePolicy{
+		Mode:    util.ToolChoiceRequired,
+		Allowed: map[string]struct{}{"read_file": {}},
+	}
+
+	h.handleResponsesNonStream(rec, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", true, []string{"read_file"}, policy, "")
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for required tool_choice violation, got %d body=%s", rec.Code, rec.Body.String())
 	}

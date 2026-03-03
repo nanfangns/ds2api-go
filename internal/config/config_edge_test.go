@@ -202,7 +202,7 @@ func TestConfigCloneNilMaps(t *testing.T) {
 
 func TestAccountIdentifierPreferenceMobileOverToken(t *testing.T) {
 	acc := Account{Mobile: "13800138000", Token: "tok"}
-	if acc.Identifier() != "13800138000" {
+	if acc.Identifier() != "+8613800138000" {
 		t.Fatalf("expected mobile identifier, got %q", acc.Identifier())
 	}
 }

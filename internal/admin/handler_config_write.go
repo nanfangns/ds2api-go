@@ -25,17 +25,28 @@ func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request) {
 		if accountsRaw, ok := req["accounts"].([]any); ok {
 			existing := map[string]config.Account{}
 			for _, a := range old.Accounts {
-				existing[a.Identifier()] = a
+				a = normalizeAccountForStorage(a)
+				key := accountDedupeKey(a)
+				if key != "" {
+					existing[key] = a
+				}
 			}
+			seen := map[string]struct{}{}
 			accounts := make([]config.Account, 0, len(accountsRaw))
 			for _, item := range accountsRaw {
 				m, ok := item.(map[string]any)
 				if !ok {
 					continue
 				}
-				acc := toAccount(m)
-				id := acc.Identifier()
-				if prev, ok := existing[id]; ok {
+				acc := normalizeAccountForStorage(toAccount(m))
+				key := accountDedupeKey(acc)
+				if key == "" {
+					continue
+				}
+				if _, ok := seen[key]; ok {
+					continue
+				}
+				if prev, ok := existing[key]; ok {
 					if strings.TrimSpace(acc.Password) == "" {
 						acc.Password = prev.Password
 					}
@@ -43,6 +54,7 @@ func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request) {
 						acc.Token = prev.Token
 					}
 				}
+				seen[key] = struct{}{}
 				accounts = append(accounts, acc)
 			}
 			c.Accounts = accounts
@@ -138,20 +150,24 @@ func (h *Handler) batchImport(w http.ResponseWriter, r *http.Request) {
 		if accounts, ok := req["accounts"].([]any); ok {
 			existing := map[string]bool{}
 			for _, a := range c.Accounts {
-				existing[a.Identifier()] = true
+				a = normalizeAccountForStorage(a)
+				key := accountDedupeKey(a)
+				if key != "" {
+					existing[key] = true
+				}
 			}
 			for _, item := range accounts {
 				m, ok := item.(map[string]any)
 				if !ok {
 					continue
 				}
-				acc := toAccount(m)
-				id := acc.Identifier()
-				if id == "" || existing[id] {
+				acc := normalizeAccountForStorage(toAccount(m))
+				key := accountDedupeKey(acc)
+				if key == "" || existing[key] {
 					continue
 				}
 				c.Accounts = append(c.Accounts, acc)
-				existing[id] = true
+				existing[key] = true
 				importedAccounts++
 			}
 		}
