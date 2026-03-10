@@ -137,3 +137,145 @@ func TestParseToolCallsAllowsPunctuationVariantToolName(t *testing.T) {
 		t.Fatalf("expected canonical tool name read_file, got %q", calls[0].Name)
 	}
 }
+
+func TestParseToolCallsSupportsClaudeXMLToolCall(t *testing.T) {
+	text := `<tool_call><tool_name>Bash</tool_name><parameters><command>pwd</command><description>show cwd</description></parameters></tool_call>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsDetailedMarksXMLToolCallSyntax(t *testing.T) {
+	text := `<tool_call><tool_name>Bash</tool_name><parameters><command>pwd</command></parameters></tool_call>`
+	res := ParseToolCallsDetailed(text, []string{"bash"})
+	if !res.SawToolCallSyntax {
+		t.Fatalf("expected SawToolCallSyntax=true, got %#v", res)
+	}
+	if len(res.Calls) != 1 {
+		t.Fatalf("expected one parsed call, got %#v", res)
+	}
+}
+
+func TestParseToolCallsSupportsClaudeXMLJSONToolCall(t *testing.T) {
+	text := `<tool_call>{"tool":"Bash","params":{"command":"pwd","description":"show cwd"}}</tool_call>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsFunctionCallTagStyle(t *testing.T) {
+	text := `<function_call>Bash</function_call><function parameter name="command">ls -la</function parameter><function parameter name="description">list</function parameter>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "ls -la" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsAntmlFunctionCallStyle(t *testing.T) {
+	text := `<antml:function_calls><antml:function_call name="Bash">{"command":"pwd","description":"x"}</antml:function_call></antml:function_calls>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsAntmlArgumentStyle(t *testing.T) {
+	text := `<antml:function_calls><antml:function_call id="1" name="Bash"><antml:argument name="command">pwd</antml:argument><antml:argument name="description">x</antml:argument></antml:function_call></antml:function_calls>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsInvokeFunctionCallStyle(t *testing.T) {
+	text := `<function_calls><invoke name="Bash"><parameter name="command">pwd</parameter><parameter name="description">d</parameter></invoke></function_calls>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsNestedToolTagStyle(t *testing.T) {
+	text := `<tool_call><tool name="Bash"><command>pwd</command><description>show cwd</description></tool></tool_call>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsAntmlFunctionAttributeWithParametersTag(t *testing.T) {
+	text := `<antml:function_calls><antml:function_call id="x" function="Bash"><antml:parameters>{"command":"pwd"}</antml:parameters></antml:function_call></antml:function_calls>`
+	calls := ParseToolCalls(text, []string{"bash"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "bash" {
+		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	}
+	if calls[0].Input["command"] != "pwd" {
+		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsMultipleAntmlFunctionCalls(t *testing.T) {
+	text := `<antml:function_calls><antml:function_call id="1" function="Bash"><antml:parameters>{"command":"pwd"}</antml:parameters></antml:function_call><antml:function_call id="2" function="Read"><antml:parameters>{"file_path":"README.md"}</antml:parameters></antml:function_call></antml:function_calls>`
+	calls := ParseToolCalls(text, []string{"bash", "read"})
+	if len(calls) != 2 {
+		t.Fatalf("expected 2 calls, got %#v", calls)
+	}
+	if calls[0].Name != "bash" || calls[1].Name != "read" {
+		t.Fatalf("expected canonical names [bash read], got %#v", calls)
+	}
+}
+
+func TestParseToolCallsDoesNotAcceptMismatchedMarkupTags(t *testing.T) {
+	text := `<tool_call><name>read_file</function><arguments>{"path":"README.md"}</arguments></tool_call>`
+	calls := ParseToolCalls(text, []string{"read_file"})
+	if len(calls) != 0 {
+		t.Fatalf("expected mismatched tags to be rejected, got %#v", calls)
+	}
+}

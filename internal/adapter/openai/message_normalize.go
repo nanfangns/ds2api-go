@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"ds2api/internal/config"
+	"ds2api/internal/prompt"
 )
 
 func normalizeOpenAIMessagesForPrompt(raw []any, traceID string) []map[string]any {
@@ -77,7 +78,7 @@ func formatAssistantToolCallsForPrompt(msg map[string]any, traceID string) strin
 				args = normalizeOpenAIArgumentsForPrompt(fn["arguments"])
 			}
 			if name == "" {
-				name = "unknown"
+				continue
 			}
 			if args == "" {
 				args = normalizeOpenAIArgumentsForPrompt(call["arguments"])
@@ -132,32 +133,7 @@ func formatToolResultForPrompt(msg map[string]any) string {
 }
 
 func normalizeOpenAIContentForPrompt(v any) string {
-	switch x := v.(type) {
-	case string:
-		return x
-	case []any:
-		parts := make([]string, 0, len(x))
-		for _, item := range x {
-			m, ok := item.(map[string]any)
-			if !ok {
-				continue
-			}
-			t := strings.ToLower(strings.TrimSpace(asString(m["type"])))
-			if t != "text" && t != "output_text" && t != "input_text" {
-				continue
-			}
-			if text := asString(m["text"]); text != "" {
-				parts = append(parts, text)
-				continue
-			}
-			if text := asString(m["content"]); text != "" {
-				parts = append(parts, text)
-			}
-		}
-		return strings.Join(parts, "\n")
-	default:
-		return marshalToPromptString(v)
-	}
+	return prompt.NormalizeContent(v)
 }
 
 func normalizeOpenAIArgumentsForPrompt(v any) string {

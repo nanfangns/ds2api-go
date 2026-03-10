@@ -21,22 +21,14 @@ function processToolSieveChunk(state, chunk, toolNames) {
   }
   const events = [];
 
-  if (Array.isArray(state.pendingToolCalls) && state.pendingToolCalls.length > 0) {
-    const pending = state.pending || '';
-    if (pending.trim() !== '') {
-      const content = (state.pendingToolRaw || '') + pending;
-      state.pending = '';
-      state.pendingToolRaw = '';
-      state.pendingToolCalls = [];
-      noteText(state, content);
-      events.push({ type: 'text', text: content });
-    } else {
-      return events;
-    }
-  }
-
   // eslint-disable-next-line no-constant-condition
   while (true) {
+    if (Array.isArray(state.pendingToolCalls) && state.pendingToolCalls.length > 0) {
+      events.push({ type: 'tool_calls', calls: state.pendingToolCalls });
+      state.pendingToolRaw = '';
+      state.pendingToolCalls = [];
+      continue;
+    }
     if (state.capturing) {
       if (state.pending) {
         state.capture += state.pending;

@@ -95,6 +95,16 @@ func (s *responsesStreamRuntime) closeMessageItem() {
 	text := s.visibleText.String()
 	if s.messagePartAdded {
 		s.sendEvent(
+			"response.output_text.done",
+			openaifmt.BuildResponsesTextDonePayload(
+				s.responseID,
+				itemID,
+				outputIndex,
+				0,
+				text,
+			),
+		)
+		s.sendEvent(
 			"response.content_part.done",
 			openaifmt.BuildResponsesContentPartDonePayload(
 				s.responseID,

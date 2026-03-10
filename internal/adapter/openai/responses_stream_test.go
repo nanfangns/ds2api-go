@@ -226,6 +226,40 @@ func TestHandleResponsesStreamMultiToolCallKeepsNameAndCallIDAligned(t *testing.
 	}
 }
 
+func TestHandleResponsesStreamEmitsOutputTextDoneBeforeContentPartDone(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	sseLine := func(v string) string {
+		b, _ := json.Marshal(map[string]any{
+			"p": "response/content",
+			"v": v,
+		})
+		return "data: " + string(b) + "\n"
+	}
+
+	streamBody := sseLine("hello") + "data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-chat", "prompt", false, false, nil, util.DefaultToolChoicePolicy(), "")
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.output_text.done") {
+		t.Fatalf("expected response.output_text.done payload, body=%s", body)
+	}
+	textDoneIdx := strings.Index(body, "event: response.output_text.done")
+	partDoneIdx := strings.Index(body, "event: response.content_part.done")
+	if textDoneIdx < 0 || partDoneIdx < 0 {
+		t.Fatalf("expected output_text.done + content_part.done, body=%s", body)
+	}
+	if textDoneIdx > partDoneIdx {
+		t.Fatalf("expected output_text.done before content_part.done, body=%s", body)
+	}
+}
+
 func TestHandleResponsesStreamOutputTextDeltaCarriesItemIndexes(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)

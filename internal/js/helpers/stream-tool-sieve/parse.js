@@ -8,7 +8,11 @@ const {
   stripFencedCodeBlocks,
   buildToolCallCandidates,
   parseToolCallsPayload,
+  parseMarkupToolCalls,
+  parseTextKVToolCalls,
 } = require('./parse_payload');
+
+const TOOL_NAME_LOOSE_PATTERN = /[^a-z0-9]+/g;
 
 function extractToolNames(tools) {
   if (!Array.isArray(tools) || tools.length === 0) {
@@ -41,19 +45,32 @@ function parseToolCallsDetailed(text, toolNames) {
   if (!toStringSafe(sanitized)) {
     return result;
   }
-  result.sawToolCallSyntax = sanitized.toLowerCase().includes('tool_calls');
+  result.sawToolCallSyntax = looksLikeToolCallSyntax(sanitized);
 
   const candidates = buildToolCallCandidates(sanitized);
   let parsed = [];
   for (const c of candidates) {
     parsed = parseToolCallsPayload(c);
+    if (parsed.length === 0) {
+      parsed = parseMarkupToolCalls(c);
+    }
+    if (parsed.length === 0) {
+      parsed = parseTextKVToolCalls(c);
+    }
     if (parsed.length > 0) {
       result.sawToolCallSyntax = true;
       break;
     }
   }
   if (parsed.length === 0) {
-    return result;
+    parsed = parseMarkupToolCalls(sanitized);
+    if (parsed.length === 0) {
+      parsed = parseTextKVToolCalls(sanitized);
+      if (parsed.length === 0) {
+        return result;
+      }
+    }
+    result.sawToolCallSyntax = true;
   }
 
   const filtered = filterToolCallsDetailed(parsed, toolNames);
@@ -73,15 +90,20 @@ function parseStandaloneToolCallsDetailed(text, toolNames) {
   if (!trimmed) {
     return result;
   }
+  if (trimmed.includes('```')) {
+    return result;
+  }
   if (looksLikeToolExampleContext(trimmed)) {
     return result;
   }
-  result.sawToolCallSyntax = trimmed.toLowerCase().includes('tool_calls');
-  if (!trimmed.startsWith('{') && !trimmed.startsWith('[')) {
-    return result;
+  result.sawToolCallSyntax = looksLikeToolCallSyntax(trimmed);
+  let parsed = parseToolCallsPayload(trimmed);
+  if (parsed.length === 0) {
+    parsed = parseMarkupToolCalls(trimmed);
   }
-
-  const parsed = parseToolCallsPayload(trimmed);
+  if (parsed.length === 0) {
+    parsed = parseTextKVToolCalls(trimmed);
+  }
   if (parsed.length === 0) {
     return result;
   }
@@ -146,7 +168,7 @@ function filterToolCallsDetailed(parsed, toolNames) {
     if (allowed.has(tc.name)) {
       matchedName = tc.name;
     } else {
-      matchedName = allowedCanonical.get(tc.name.toLowerCase()) || '';
+      matchedName = resolveAllowedToolName(tc.name, allowed, allowedCanonical);
     }
     if (!matchedName) {
       if (!seenRejected.has(tc.name)) {
@@ -161,6 +183,46 @@ function filterToolCallsDetailed(parsed, toolNames) {
     });
   }
   return { calls, rejectedToolNames: rejected };
+}
+
+function resolveAllowedToolName(name, allowed, allowedCanonical) {
+  const normalizedName = toStringSafe(name).trim();
+  if (!normalizedName) {
+    return '';
+  }
+  if (allowed.has(normalizedName)) {
+    return normalizedName;
+  }
+  const lower = normalizedName.toLowerCase();
+  if (allowedCanonical.has(lower)) {
+    return allowedCanonical.get(lower);
+  }
+  const idx = lower.lastIndexOf('.');
+  if (idx >= 0 && idx < lower.length - 1) {
+    const tail = lower.slice(idx + 1);
+    if (allowedCanonical.has(tail)) {
+      return allowedCanonical.get(tail);
+    }
+  }
+  const loose = lower.replace(TOOL_NAME_LOOSE_PATTERN, '');
+  if (!loose) {
+    return '';
+  }
+  for (const [candidateLower, canonical] of allowedCanonical.entries()) {
+    if (candidateLower.replace(TOOL_NAME_LOOSE_PATTERN, '') === loose) {
+      return canonical;
+    }
+  }
+  return '';
+}
+
+function looksLikeToolCallSyntax(text) {
+  const lower = toStringSafe(text).toLowerCase();
+  return lower.includes('tool_calls')
+    || lower.includes('<tool_call')
+    || lower.includes('<function_call')
+    || lower.includes('<invoke')
+    || lower.includes('function.name:');
 }
 
 module.exports = {

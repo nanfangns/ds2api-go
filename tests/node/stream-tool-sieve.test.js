@@ -94,6 +94,34 @@ test('parseToolCalls supports fenced json and function.arguments string payload'
   assert.equal(calls.length, 0);
 });
 
+test('parseToolCalls parses text-kv fallback payload', () => {
+  const text = [
+    '[TOOL_CALL_HISTORY]',
+    'function.name: execute_command',
+    'function.arguments: {"command":"cd scripts && python check_syntax.py example.py","cwd":null,"timeout":30}',
+    '[/TOOL_CALL_HISTORY]',
+    'Some other text thinking...',
+  ].join('\n');
+  const calls = parseToolCalls(text, ['execute_command']);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'execute_command');
+  assert.equal(calls[0].input.command, 'cd scripts && python check_syntax.py example.py');
+});
+
+test('parseToolCalls parses multiple text-kv fallback payloads', () => {
+  const text = [
+    'function.name: read_file',
+    'function.arguments: {"path":"abc.txt"}',
+    '',
+    'function.name: bash',
+    'function.arguments: {"command":"ls"}',
+  ].join('\n');
+  const calls = parseToolCalls(text, ['read_file', 'bash']);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].name, 'read_file');
+  assert.equal(calls[1].name, 'bash');
+});
+
 test('parseStandaloneToolCalls only matches standalone payload and ignores mixed prose', () => {
   const mixed = '这里是示例：{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}，请勿执行。';
   const standalone = '{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}';
@@ -109,7 +137,23 @@ test('parseStandaloneToolCalls ignores fenced code block tool_call examples', ()
   assert.equal(calls.length, 0);
 });
 
-test('sieve keeps late key convergence payload as plain text in strict mode', () => {
+
+test('sieve emits tool_calls in the same chunk processing tick once payload is complete', () => {
+  const state = createToolSieveState();
+  const first = processToolSieveChunk(state, '{"', ['read_file']);
+  const second = processToolSieveChunk(
+    state,
+    'tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}',
+    ['read_file'],
+  );
+  const firstCalls = first.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  const secondCalls = second.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(firstCalls.length, 0);
+  assert.equal(secondCalls.length, 1);
+  assert.equal(secondCalls[0].name, 'read_file');
+});
+
+test('sieve emits tool_calls when late key convergence forms a complete payload', () => {
   const events = runSieve(
     [
       '{"',
@@ -119,12 +163,11 @@ test('sieve keeps late key convergence payload as plain text in strict mode', ()
     ['read_file'],
   );
   const leakedText = collectText(events);
-  const hasToolCall = events.some((evt) => evt.type === 'tool_calls' && Array.isArray(evt.calls) && evt.calls.length > 0);
-  const hasToolDelta = events.some((evt) => evt.type === 'tool_call_deltas' && Array.isArray(evt.deltas) && evt.deltas.length > 0);
-  assert.equal(hasToolCall || hasToolDelta, false);
-  assert.equal(leakedText.includes('{'), true);
-  assert.equal(leakedText.toLowerCase().includes('tool_calls'), true);
+  const finalCalls = events.filter((evt) => evt.type === 'tool_calls').flatMap((evt) => evt.calls || []);
+  assert.equal(finalCalls.length, 1);
+  assert.equal(finalCalls[0].name, 'read_file');
   assert.equal(leakedText.includes('后置正文C。'), true);
+  assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
 });
 
 test('sieve keeps embedded invalid tool-like json as normal text to avoid stream stalls', () => {
@@ -248,4 +291,10 @@ test('formatOpenAIStreamToolCalls reuses ids with the same idStore', () => {
   assert.equal(first.length, 1);
   assert.equal(second.length, 1);
   assert.equal(first[0].id, second[0].id);
+});
+
+test('parseToolCalls rejects mismatched markup tags', () => {
+  const payload = '<tool_call><name>read_file</function><arguments>{"path":"README.md"}</arguments></tool_call>';
+  const calls = parseToolCalls(payload, ['read_file']);
+  assert.equal(calls.length, 0);
 });

@@ -71,6 +71,19 @@ func BuildResponsesTextDeltaPayload(responseID, itemID string, outputIndex, cont
 	}
 }
 
+
+func BuildResponsesTextDonePayload(responseID, itemID string, outputIndex, contentIndex int, text string) map[string]any {
+	return map[string]any{
+		"type":          "response.output_text.done",
+		"id":            responseID,
+		"response_id":   responseID,
+		"item_id":       itemID,
+		"output_index":  outputIndex,
+		"content_index": contentIndex,
+		"text":          text,
+	}
+}
+
 func BuildResponsesReasoningDeltaPayload(responseID, delta string) map[string]any {
 	return map[string]any{
 		"type":        "response.reasoning.delta",

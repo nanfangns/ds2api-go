@@ -51,6 +51,9 @@ func MessagesPrepare(messages []map[string]any) string {
 }
 
 func NormalizeContent(v any) string {
+	if v == nil {
+		return ""
+	}
 	switch x := v.(type) {
 	case string:
 		return x
@@ -64,11 +67,11 @@ func NormalizeContent(v any) string {
 			typeStr, _ := m["type"].(string)
 			typeStr = strings.ToLower(strings.TrimSpace(typeStr))
 			if typeStr == "text" || typeStr == "output_text" || typeStr == "input_text" {
-				if txt, ok := m["text"].(string); ok {
+				if txt, ok := m["text"].(string); ok && txt != "" {
 					parts = append(parts, txt)
 					continue
 				}
-				if txt, ok := m["content"].(string); ok {
+				if txt, ok := m["content"].(string); ok && txt != "" {
 					parts = append(parts, txt)
 				}
 			}
