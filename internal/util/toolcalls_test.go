@@ -1,6 +1,9 @@
 package util
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestParseToolCalls(t *testing.T) {
 	text := `prefix {"tool_calls":[{"name":"search","input":{"q":"golang"}}]} suffix`
@@ -19,8 +22,8 @@ func TestParseToolCalls(t *testing.T) {
 func TestParseToolCallsFromFencedJSON(t *testing.T) {
 	text := "I will call tools now\n```json\n{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"news\"}}]}\n```"
 	calls := ParseToolCalls(text, []string{"search"})
-	if len(calls) != 0 {
-		t.Fatalf("expected fenced tool_call example to be ignored, got %#v", calls)
+	if len(calls) != 1 {
+		t.Fatalf("expected fenced tool_call payload to be parsed, got %#v", calls)
 	}
 }
 
@@ -96,10 +99,10 @@ func TestFormatOpenAIToolCalls(t *testing.T) {
 	}
 }
 
-func TestParseStandaloneToolCallsOnlyMatchesStandalonePayload(t *testing.T) {
+func TestParseStandaloneToolCallsSupportsMixedProsePayload(t *testing.T) {
 	mixed := `这里是示例：{"tool_calls":[{"name":"search","input":{"q":"go"}}]}`
-	if calls := ParseStandaloneToolCalls(mixed, []string{"search"}); len(calls) != 0 {
-		t.Fatalf("expected standalone parser to ignore mixed prose, got %#v", calls)
+	if calls := ParseStandaloneToolCalls(mixed, []string{"search"}); len(calls) != 1 {
+		t.Fatalf("expected standalone parser to parse mixed prose payload, got %#v", calls)
 	}
 
 	standalone := `{"tool_calls":[{"name":"search","input":{"q":"go"}}]}`
@@ -109,10 +112,10 @@ func TestParseStandaloneToolCallsOnlyMatchesStandalonePayload(t *testing.T) {
 	}
 }
 
-func TestParseStandaloneToolCallsIgnoresFencedCodeBlock(t *testing.T) {
+func TestParseStandaloneToolCallsParsesFencedCodeBlock(t *testing.T) {
 	fenced := "```json\n{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"go\"}}]}\n```"
-	if calls := ParseStandaloneToolCalls(fenced, []string{"search"}); len(calls) != 0 {
-		t.Fatalf("expected fenced tool_call example to be ignored, got %#v", calls)
+	if calls := ParseStandaloneToolCalls(fenced, []string{"search"}); len(calls) != 1 {
+		t.Fatalf("expected fenced tool_call payload to be parsed, got %#v", calls)
 	}
 }
 
@@ -277,5 +280,240 @@ func TestParseToolCallsDoesNotAcceptMismatchedMarkupTags(t *testing.T) {
 	calls := ParseToolCalls(text, []string{"read_file"})
 	if len(calls) != 0 {
 		t.Fatalf("expected mismatched tags to be rejected, got %#v", calls)
+	}
+}
+
+func TestRepairInvalidJSONBackslashes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`{"path": "C:\Users\name"}`, `{"path": "C:\\Users\name"}`},
+		{`{"cmd": "cd D:\git_codes"}`, `{"cmd": "cd D:\\git_codes"}`},
+		{`{"text": "line1\nline2"}`, `{"text": "line1\nline2"}`},
+		{`{"path": "D:\\back\\slash"}`, `{"path": "D:\\back\\slash"}`},
+		{`{"unicode": "\u2705"}`, `{"unicode": "\u2705"}`},
+		{`{"invalid_u": "\u123"}`, `{"invalid_u": "\\u123"}`},
+	}
+
+	for _, tt := range tests {
+		got := repairInvalidJSONBackslashes(tt.input)
+		if got != tt.expected {
+			t.Errorf("repairInvalidJSONBackslashes(%s) = %s; want %s", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestRepairLooseJSON(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{`{tool_calls: [{"name": "search", "input": {"q": "go"}}]}`, `{"tool_calls": [{"name": "search", "input": {"q": "go"}}]}`},
+		{`{name: "search", input: {q: "go"}}`, `{"name": "search", "input": {"q": "go"}}`},
+	}
+
+	for _, tt := range tests {
+		got := RepairLooseJSON(tt.input)
+		if got != tt.expected {
+			t.Errorf("RepairLooseJSON(%s) = %s; want %s", tt.input, got, tt.expected)
+		}
+	}
+}
+
+func TestParseToolCallsWithUnquotedKeys(t *testing.T) {
+	text := `这里是列表：{tool_calls: [{"name": "todowrite", "input": {"todos": "test"}}]}`
+	availableTools := []string{"todowrite"}
+
+	parsed := ParseToolCalls(text, availableTools)
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 tool call, got %d", len(parsed))
+	}
+	if parsed[0].Name != "todowrite" {
+		t.Errorf("expected tool todowrite, got %s", parsed[0].Name)
+	}
+}
+
+func TestParseToolCallsWithInvalidBackslashes(t *testing.T) {
+	// DeepSeek sometimes outputs Windows paths with single backslashes in JSON strings
+	// Note: using raw string to simulate what AI actually sends in the stream
+	text := `好的，执行以下命令：{"name": "execute_command", "input": "{\"command\": \"cd D:\git_codes && dir\"}"}`
+	availableTools := []string{"execute_command"}
+
+	parsed := ParseToolCalls(text, availableTools)
+	// If standard JSON fails, buildToolCallCandidates should still extract the object,
+	// and parseToolCallsPayload should repair it.
+	if len(parsed) != 1 {
+		// If it still fails, let's see why
+		candidates := buildToolCallCandidates(text)
+		t.Logf("Candidates: %v", candidates)
+		t.Fatalf("expected 1 tool call, got %d", len(parsed))
+	}
+
+	cmd, ok := parsed[0].Input["command"].(string)
+	if !ok {
+		t.Fatalf("expected command string in input, got %v", parsed[0].Input)
+	}
+
+	expected := "cd D:\\git_codes && dir"
+	if cmd != expected {
+		t.Errorf("expected command %q, got %q", expected, cmd)
+	}
+}
+
+func TestParseToolCallsWithDeepSeekHallucination(t *testing.T) {
+	// 模拟 DeepSeek 典型的幻觉输出：未加引号的键名 + 包含 Windows 路径的嵌套 JSON 字符串 + 漏掉列表的方括号
+	text := `检测到实施意图——实现经典算法。需在misc/目录创建Python文件。
+关键约束:
+1. Windows UTF-8编码处理
+2. 必须用绝对路径导入
+3. 禁止write覆盖已有文件（misc/目录允许创建新文件）
+将任务分解并委托：
+- 研究8皇后算法模式（并行探索）
+- 实现带可视化输出的解决方案（unspecified-high）
+先创建todo列表追踪步骤。
+{tool_calls: [{"name": "todowrite", "input": {"todos": {"content": "研究8皇后问题算法模式（回溯法）和输出格式", "status": "pending", "priority": "high"}, {"content": "在misc/目录创建8皇后Python脚本，包含完整解决方案和可视化输出", "status": "pending", "priority": "high"}, {"content": "验证脚本正确性（运行测试）", "status": "pending", "priority": "medium"}}}]}`
+
+	availableTools := []string{"todowrite"}
+	parsed := ParseToolCalls(text, availableTools)
+
+	if len(parsed) != 1 {
+		cands := buildToolCallCandidates(text)
+		for i, c := range cands {
+			t.Logf("CAND %d: %s", i, c)
+			repaired := RepairLooseJSON(c)
+			t.Logf("  REPAIRED: %s", repaired)
+		}
+		t.Fatalf("expected 1 tool call, got %d. Candidates: %v", len(parsed), buildToolCallCandidates(text))
+	}
+
+	if parsed[0].Name != "todowrite" {
+		t.Errorf("expected tool name 'todowrite', got %q", parsed[0].Name)
+	}
+
+	todos, ok := parsed[0].Input["todos"].([]any)
+	if !ok {
+		t.Fatalf("expected 'todos' to be parsed as a list, got %T: %#v", parsed[0].Input["todos"], parsed[0].Input["todos"])
+	}
+	if len(todos) != 3 {
+		t.Errorf("expected 3 todo items, got %d", len(todos))
+	}
+}
+
+func TestParseToolCallsWithMixedWindowsPaths(t *testing.T) {
+	// 更复杂的案例：嵌套 JSON 字符串中的反斜杠未转义
+	text := `关键约束: 1. Windows UTF-8编码处理 2. 必须用绝对路径导入 D:\git_codes\ds2api\misc
+{tool_calls: [{"name": "write_file", "input": "{\"path\": \"D:\\git_codes\\ds2api\\misc\\queens.py\", \"content\": \"print('hello')\"}"}]}`
+
+	availableTools := []string{"write_file"}
+	parsed := ParseToolCalls(text, availableTools)
+
+	if len(parsed) != 1 {
+		t.Fatalf("expected 1 tool call from mixed text with paths, got %d", len(parsed))
+	}
+
+	path, _ := parsed[0].Input["path"].(string)
+	// 在解析后的 Go map 中，反斜杠应该被还原
+	if !strings.Contains(path, "D:\\git_codes") && !strings.Contains(path, "D:/git_codes") {
+		t.Errorf("expected path to contain Windows style separators, got %q", path)
+	}
+}
+
+func TestParseToolCallInputRepairsControlCharsInPath(t *testing.T) {
+	in := `{"path":"D:\tmp\new\readme.txt","content":"line1\nline2"}`
+	parsed := parseToolCallInput(in)
+
+	path, ok := parsed["path"].(string)
+	if !ok {
+		t.Fatalf("expected path string in parsed input, got %#v", parsed["path"])
+	}
+	if path != `D:\tmp\new\readme.txt` {
+		t.Fatalf("expected repaired windows path, got %q", path)
+	}
+
+	content, ok := parsed["content"].(string)
+	if !ok {
+		t.Fatalf("expected content string in parsed input, got %#v", parsed["content"])
+	}
+	if content != "line1\nline2" {
+		t.Fatalf("expected non-path field to keep decoded escapes, got %q", content)
+	}
+}
+
+func TestRepairLooseJSONWithNestedObjects(t *testing.T) {
+	// 测试嵌套对象的修复：DeepSeek 幻觉输出，每个元素内部包含嵌套 {}
+	// 注意：正则只支持单层嵌套，不支持更深层次的嵌套
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		// 1. 单层嵌套对象（核心修复目标）
+		{
+			name:     "单层嵌套 - 2个元素",
+			input:    `"todos": {"content": "研究算法", "input": {"q": "8 queens"}}, {"content": "实现", "input": {"path": "queens.py"}}`,
+			expected: `"todos": [{"content": "研究算法", "input": {"q": "8 queens"}}, {"content": "实现", "input": {"path": "queens.py"}}]`,
+		},
+		// 2. 3个单层嵌套对象
+		{
+			name:     "3个单层嵌套对象",
+			input:    `"items": {"a": {"x":1}}, {"b": {"y":2}}, {"c": {"z":3}}`,
+			expected: `"items": [{"a": {"x":1}}, {"b": {"y":2}}, {"c": {"z":3}}]`,
+		},
+		// 3. 混合嵌套：有些字段是对象，有些是原始值
+		{
+			name:     "混合嵌套 - 对象和原始值混合",
+			input:    `"items": {"name": "test", "config": {"timeout": 30}}, {"name": "test2", "config": {"timeout": 60}}`,
+			expected: `"items": [{"name": "test", "config": {"timeout": 30}}, {"name": "test2", "config": {"timeout": 60}}]`,
+		},
+		// 4. 4个嵌套对象（边界测试）
+		{
+			name:     "4个嵌套对象",
+			input:    `"todos": {"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}`,
+			expected: `"todos": [{"id": 1}, {"id": 2}, {"id": 3}, {"id": 4}]`,
+		},
+		// 5. DeepSeek 典型幻觉：无空格逗号分隔
+		{
+			name:     "无空格逗号分隔",
+			input:    `"results": {"name": "a"}, {"name": "b"}, {"name": "c"}`,
+			expected: `"results": [{"name": "a"}, {"name": "b"}, {"name": "c"}]`,
+		},
+		// 6. 嵌套数组（数组在对象内，不是深层嵌套）
+		{
+			name:     "对象内包含数组",
+			input:    `"data": {"items": [1,2,3]}, {"items": [4,5,6]}`,
+			expected: `"data": [{"items": [1,2,3]}, {"items": [4,5,6]}]`,
+		},
+		// 7. 真实的 DeepSeek 8皇后问题输出
+		{
+			name:     "DeepSeek 8皇后真实输出",
+			input:    `"todos": {"content": "研究8皇后算法", "status": "pending"}, {"content": "实现Python脚本", "status": "pending"}, {"content": "验证结果", "status": "pending"}`,
+			expected: `"todos": [{"content": "研究8皇后算法", "status": "pending"}, {"content": "实现Python脚本", "status": "pending"}, {"content": "验证结果", "status": "pending"}]`,
+		},
+		// 8. 简单无嵌套对象（回归测试）
+		{
+			name:     "简单无嵌套对象",
+			input:    `"items": {"a": 1}, {"b": 2}`,
+			expected: `"items": [{"a": 1}, {"b": 2}]`,
+		},
+		// 9. 更复杂的单层嵌套
+		{
+			name:     "复杂单层嵌套",
+			input:    `"functions": {"name": "execute", "input": {"command": "ls"}}, {"name": "read", "input": {"file": "a.txt"}}`,
+			expected: `"functions": [{"name": "execute", "input": {"command": "ls"}}, {"name": "read", "input": {"file": "a.txt"}}]`,
+		},
+		// 10. 5个嵌套对象
+		{
+			name:     "5个嵌套对象",
+			input:    `"tasks": {"id":1}, {"id":2}, {"id":3}, {"id":4}, {"id":5}`,
+			expected: `"tasks": [{"id":1}, {"id":2}, {"id":3}, {"id":4}, {"id":5}]`,
+		},
+	}
+
+	for _, tt := range tests {
+		got := RepairLooseJSON(tt.input)
+		if got != tt.expected {
+			t.Errorf("[%s] RepairLooseJSON with nested objects:\n  input:    %s\n  got:      %s\n  expected: %s", tt.name, tt.input, got, tt.expected)
+		}
 	}
 }

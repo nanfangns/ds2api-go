@@ -16,17 +16,12 @@ type ToolCallParseResult struct {
 	RejectedByPolicy  bool
 	RejectedToolNames []string
 }
-
 func ParseToolCalls(text string, availableToolNames []string) []ParsedToolCall {
 	return ParseToolCallsDetailed(text, availableToolNames).Calls
 }
 
 func ParseToolCallsDetailed(text string, availableToolNames []string) ToolCallParseResult {
 	result := ToolCallParseResult{}
-	if strings.TrimSpace(text) == "" {
-		return result
-	}
-	text = stripFencedCodeBlocks(text)
 	if strings.TrimSpace(text) == "" {
 		return result
 	}
@@ -68,7 +63,6 @@ func ParseToolCallsDetailed(text string, availableToolNames []string) ToolCallPa
 	result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
 	return result
 }
-
 func ParseStandaloneToolCalls(text string, availableToolNames []string) []ParsedToolCall {
 	return ParseStandaloneToolCallsDetailed(text, availableToolNames).Calls
 }
@@ -79,17 +73,15 @@ func ParseStandaloneToolCallsDetailed(text string, availableToolNames []string) 
 	if trimmed == "" {
 		return result
 	}
-	if looksLikeToolExampleContext(trimmed) {
-		return result
-	}
 	result.SawToolCallSyntax = looksLikeToolCallSyntax(trimmed)
-	candidates := []string{trimmed}
+	candidates := buildToolCallCandidates(trimmed)
+	var parsed []ParsedToolCall
 	for _, candidate := range candidates {
 		candidate = strings.TrimSpace(candidate)
 		if candidate == "" {
 			continue
 		}
-		parsed := parseToolCallsPayload(candidate)
+		parsed = parseToolCallsPayload(candidate)
 		if len(parsed) == 0 {
 			parsed = parseXMLToolCalls(candidate)
 		}
@@ -100,14 +92,23 @@ func ParseStandaloneToolCallsDetailed(text string, availableToolNames []string) 
 			parsed = parseTextKVToolCalls(candidate)
 		}
 		if len(parsed) > 0 {
-			result.SawToolCallSyntax = true
-			calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
-			result.Calls = calls
-			result.RejectedToolNames = rejectedNames
-			result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
-			return result
+			break
 		}
 	}
+	if len(parsed) == 0 {
+		parsed = parseXMLToolCalls(trimmed)
+		if len(parsed) == 0 {
+			parsed = parseTextKVToolCalls(trimmed)
+			if len(parsed) == 0 {
+				return result
+			}
+		}
+	}
+	result.SawToolCallSyntax = true
+	calls, rejectedNames := filterToolCallsDetailed(parsed, availableToolNames)
+	result.Calls = calls
+	result.RejectedToolNames = rejectedNames
+	result.RejectedByPolicy = len(rejectedNames) > 0 && len(calls) == 0
 	return result
 }
 
@@ -171,7 +172,13 @@ func resolveAllowedToolName(name string, allowed map[string]struct{}, allowedCan
 func parseToolCallsPayload(payload string) []ParsedToolCall {
 	var decoded any
 	if err := json.Unmarshal([]byte(payload), &decoded); err != nil {
-		return nil
+		// Try to repair backslashes first! Because LLMs often mix these two problems.
+		repaired := repairInvalidJSONBackslashes(payload)
+		// Try loose repair on top of that
+		repaired = RepairLooseJSON(repaired)
+		if err := json.Unmarshal([]byte(repaired), &decoded); err != nil {
+			return nil
+		}
 	}
 	switch v := decoded.(type) {
 	case map[string]any:
@@ -247,33 +254,4 @@ func parseToolCallItem(m map[string]any) (ParsedToolCall, bool) {
 		Name:  strings.TrimSpace(name),
 		Input: parseToolCallInput(inputRaw),
 	}, true
-}
-
-func parseToolCallInput(v any) map[string]any {
-	switch x := v.(type) {
-	case nil:
-		return map[string]any{}
-	case map[string]any:
-		return x
-	case string:
-		raw := strings.TrimSpace(x)
-		if raw == "" {
-			return map[string]any{}
-		}
-		var parsed map[string]any
-		if err := json.Unmarshal([]byte(raw), &parsed); err == nil && parsed != nil {
-			return parsed
-		}
-		return map[string]any{"_raw": raw}
-	default:
-		b, err := json.Marshal(x)
-		if err != nil {
-			return map[string]any{}
-		}
-		var parsed map[string]any
-		if err := json.Unmarshal(b, &parsed); err == nil && parsed != nil {
-			return parsed
-		}
-		return map[string]any{}
-	}
 }

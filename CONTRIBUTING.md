@@ -99,7 +99,7 @@ ds2api/
 ├── api/
 │   ├── index.go             # Vercel Serverless Go 入口
 │   ├── chat-stream.js       # Vercel Node.js 流式转发
-│   └── helpers/             # Node.js 辅助模块
+│   └── (rewrite targets in vercel.json)
 ├── internal/
 │   ├── account/             # 账号池与并发队列
 │   ├── adapter/
@@ -112,6 +112,7 @@ ds2api/
 │   ├── compat/              # 兼容性辅助
 │   ├── config/              # 配置加载与热更新
 │   ├── deepseek/            # DeepSeek 客户端、PoW WASM
+│   ├── js/                  # Node 运行时流式/兼容逻辑
 │   ├── devcapture/          # 开发抓包
 │   ├── format/              # 输出格式化
 │   ├── prompt/              # Prompt 构建
@@ -123,7 +124,9 @@ ds2api/
 │   └── webui/               # WebUI 静态托管
 ├── webui/                   # React WebUI 源码
 │   └── src/
-│       ├── components/      # 组件
+│       ├── app/             # 路由、鉴权、配置状态
+│       ├── features/        # 业务功能模块
+│       ├── components/      # 通用组件
 │       └── locales/         # 语言包
 ├── scripts/                 # 构建与测试脚本
 ├── static/admin/            # WebUI 构建产物（不提交）

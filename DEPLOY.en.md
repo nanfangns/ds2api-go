@@ -113,12 +113,8 @@ go build -o ds2api ./cmd/ds2api
 # Copy env template
 cp .env.example .env
 
-# Generate single-line Base64 from config.json
-DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
-
-# Edit .env and set:
+# Edit .env and set at least:
 #   DS2API_ADMIN_KEY=your-admin-key
-#   DS2API_CONFIG_JSON=${DS2API_CONFIG_JSON}
 
 # Start
 docker-compose up -d
@@ -366,7 +362,7 @@ Each archive includes:
 
 - `ds2api` executable (`ds2api.exe` on Windows)
 - `static/admin/` (built WebUI assets)
-- `sha3_wasm_bg.7b9ca65ddd.wasm`
+- `sha3_wasm_bg.7b9ca65ddd.wasm` (optional; binary has embedded fallback)
 - `config.example.json`, `.env.example`
 - `README.MD`, `README.en.md`, `LICENSE`
 
@@ -455,7 +451,9 @@ server {
 ```bash
 # Copy compiled binary and related files to target directory
 sudo mkdir -p /opt/ds2api
-sudo cp ds2api config.json sha3_wasm_bg.7b9ca65ddd.wasm /opt/ds2api/
+sudo cp ds2api config.json /opt/ds2api/
+# Optional: if you want to use an external WASM file (override embedded one)
+# sudo cp sha3_wasm_bg.7b9ca65ddd.wasm /opt/ds2api/
 sudo cp -r static/admin /opt/ds2api/static/admin
 ```
 

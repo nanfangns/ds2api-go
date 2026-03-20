@@ -99,7 +99,7 @@ ds2api/
 ├── api/
 │   ├── index.go             # Vercel Serverless Go entry
 │   ├── chat-stream.js       # Vercel Node.js stream relay
-│   └── helpers/             # Node.js helper modules
+│   └── (rewrite targets in vercel.json)
 ├── internal/
 │   ├── account/             # Account pool and concurrency queue
 │   ├── adapter/
@@ -112,6 +112,7 @@ ds2api/
 │   ├── compat/              # Compatibility helpers
 │   ├── config/              # Config loading and hot-reload
 │   ├── deepseek/            # DeepSeek client, PoW WASM
+│   ├── js/                  # Node runtime stream/compat logic
 │   ├── devcapture/          # Dev packet capture
 │   ├── format/              # Output formatting
 │   ├── prompt/              # Prompt building
@@ -123,7 +124,9 @@ ds2api/
 │   └── webui/               # WebUI static hosting
 ├── webui/                   # React WebUI source
 │   └── src/
-│       ├── components/      # Components
+│       ├── app/             # Routing, auth, config state
+│       ├── features/        # Feature modules
+│       ├── components/      # Shared components
 │       └── locales/         # Language packs
 ├── scripts/                 # Build and test scripts
 ├── static/admin/            # WebUI build output (not committed)

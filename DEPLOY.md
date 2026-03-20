@@ -113,12 +113,8 @@ go build -o ds2api ./cmd/ds2api
 # 复制环境变量模板
 cp .env.example .env
 
-# 从 config.json 生成单行 Base64
-DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
-
-# 编辑 .env（请改成你的强密码），设置：
+# 编辑 .env（请改成你的强密码），至少设置：
 #   DS2API_ADMIN_KEY=your-admin-key
-#   DS2API_CONFIG_JSON=${DS2API_CONFIG_JSON}
 
 # 启动
 docker-compose up -d
@@ -366,7 +362,7 @@ No Output Directory named "public" found after the Build completed.
 
 - `ds2api` 可执行文件（Windows 为 `ds2api.exe`）
 - `static/admin/`（WebUI 构建产物）
-- `sha3_wasm_bg.7b9ca65ddd.wasm`
+- `sha3_wasm_bg.7b9ca65ddd.wasm`（可选；程序内置 embed fallback）
 - `config.example.json`、`.env.example`
 - `README.MD`、`README.en.md`、`LICENSE`
 
@@ -455,7 +451,9 @@ server {
 ```bash
 # 将编译好的二进制文件和相关文件复制到目标目录
 sudo mkdir -p /opt/ds2api
-sudo cp ds2api config.json sha3_wasm_bg.7b9ca65ddd.wasm /opt/ds2api/
+sudo cp ds2api config.json /opt/ds2api/
+# 可选：若你希望使用外置 WASM 文件（覆盖内置版本）
+# sudo cp sha3_wasm_bg.7b9ca65ddd.wasm /opt/ds2api/
 sudo cp -r static/admin /opt/ds2api/static/admin
 ```
 

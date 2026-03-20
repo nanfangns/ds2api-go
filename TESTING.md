@@ -51,7 +51,7 @@ DS2API 提供两个层级的测试：
 1. **Preflight 检查**：
    - `go test ./... -count=1`（单元测试）
    - `./tests/scripts/check-node-split-syntax.sh`（Node 拆分模块语法门禁）
-   - `node --test`（如仓库存在 Node 单测文件时执行；当前默认以 Go 测试 + Node 语法门禁为主）
+   - `node --test tests/node/stream-tool-sieve.test.js tests/node/chat-stream.test.js tests/node/js_compat_test.js`
    - `npm run build --prefix webui`（WebUI 构建检查）
 
 2. **隔离启动**：复制 `config.json` 到临时目录，启动独立服务进程
@@ -171,6 +171,50 @@ rg "<trace_id>" artifacts/testsuite/<run_id>/server.log
 
 ```bash
 go test ./...
+```
+
+### 运行特定模块的单元测试
+
+```bash
+# 运行 tool calls 相关测试（推荐用于调试 tool call 解析问题）
+go test -v -run 'TestParseToolCalls|TestRepair' ./internal/util/
+
+# 运行单个测试用例
+go test -v -run TestParseToolCallsWithDeepSeekHallucination ./internal/util/
+
+# 运行 format 相关测试
+go test -v ./internal/format/...
+
+# 运行 adapter 相关测试
+go test -v ./internal/adapter/openai/...
+```
+
+### 调试 Tool Call 问题 | Debugging Tool Call Issues
+
+当遇到 DeepSeek 工具调用解析问题时，可以使用以下方法：
+
+```bash
+# 1. 运行 tool calls 相关的所有测试
+go test -v -run 'TestParseToolCalls|TestRepair' ./internal/util/
+
+# 2. 查看测试输出中的详细调试信息
+go test -v -run TestParseToolCallsWithDeepSeekHallucination ./internal/util/ 2>&1
+
+# 3. 检查具体测试用例的修复效果
+# 测试用例位于 internal/util/toolcalls_test.go，包含：
+# - TestParseToolCallsWithDeepSeekHallucination: DeepSeek 典型幻觉输出
+# - TestRepairLooseJSONWithNestedObjects: 嵌套对象的方括号修复
+# - TestParseToolCallsWithMixedWindowsPaths: Windows 路径处理
+```
+
+### 运行 Node.js 测试
+
+```bash
+# 运行 Node 测试
+node --test tests/node/stream-tool-sieve.test.js
+
+# 或使用脚本
+./tests/scripts/run-unit-node.sh
 ```
 
 ### 跑端到端测试（跳过 preflight）

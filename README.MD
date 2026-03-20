@@ -160,17 +160,13 @@ go run ./cmd/ds2api
 # 1. 准备环境变量文件
 cp .env.example .env
 
-# 2. 从 config.json 生成 DS2API_CONFIG_JSON（单行 Base64）
-DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
-
-# 3. 编辑 .env，设置：
+# 2. 编辑 .env（至少设置 DS2API_ADMIN_KEY）
 #    DS2API_ADMIN_KEY=请替换为强密码
-#    DS2API_CONFIG_JSON=${DS2API_CONFIG_JSON}
 
-# 4. 启动
+# 3. 启动
 docker-compose up -d
 
-# 5. 查看日志
+# 4. 查看日志
 docker-compose logs -f
 ```
 
@@ -397,7 +393,7 @@ ds2api/
 ├── api/
 │   ├── index.go             # Vercel Serverless Go 入口
 │   ├── chat-stream.js       # Vercel Node.js 流式转发
-│   └── helpers/             # Node.js 辅助模块
+│   └── (rewrite targets in vercel.json)
 ├── internal/
 │   ├── account/             # 账号池与并发队列
 │   ├── adapter/
@@ -410,6 +406,7 @@ ds2api/
 │   ├── compat/              # 兼容性辅助
 │   ├── config/              # 配置加载与热更新
 │   ├── deepseek/            # DeepSeek API 客户端、PoW WASM
+│   ├── js/                  # Node 运行时流式处理与兼容逻辑
 │   ├── devcapture/          # 开发抓包模块
 │   ├── format/              # 输出格式化
 │   ├── prompt/              # Prompt 构建
@@ -420,7 +417,9 @@ ds2api/
 │   └── webui/               # WebUI 静态文件托管与自动构建
 ├── webui/                   # React WebUI 源码（Vite + Tailwind）
 │   └── src/
-│       ├── components/      # AccountManager / ApiTester / BatchImport / VercelSync / Login / LandingPage
+│       ├── app/             # 路由、鉴权、配置状态管理
+│       ├── features/        # 业务功能模块（account/settings/vercel/apiTester）
+│       ├── components/      # 登录/落地页等通用组件
 │       └── locales/         # 中英文语言包（zh.json / en.json）
 ├── scripts/
 │   └── build-webui.sh       # WebUI 手动构建脚本
@@ -476,6 +475,23 @@ go run ./cmd/ds2api-tests \
 npm ci --prefix webui && npm run build --prefix webui
 ```
 
+## 测试
+
+详细测试指南请参阅 [TESTING.md](TESTING.md)。
+
+### 快速测试命令
+
+```bash
+# 运行所有单元测试
+go test ./...
+
+# 运行 tool calls 相关测试（调试工具调用问题）
+go test -v -run 'TestParseToolCalls|TestRepair' ./internal/util/
+
+# 运行端到端测试
+./tests/scripts/run-live.sh
+```
+
 ## Release 自动构建（GitHub Actions）
 
 工作流文件：`.github/workflows/release-artifacts.yml`
@@ -483,7 +499,7 @@ npm ci --prefix webui && npm run build --prefix webui
 - **触发条件**：仅在 GitHub Release `published` 时触发（普通 push 不会触发）
 - **构建产物**：多平台二进制包（`linux/amd64`、`linux/arm64`、`darwin/amd64`、`darwin/arm64`、`windows/amd64`）+ `sha256sums.txt`
 - **容器镜像发布**：仅推送到 GHCR（`ghcr.io/cjackhwang/ds2api`）
-- **每个压缩包包含**：`ds2api` 可执行文件、`static/admin`、WASM 文件、配置示例、README、LICENSE
+- **每个压缩包包含**：`ds2api` 可执行文件、`static/admin`、WASM 文件（同时支持内置 fallback）、配置示例、README、LICENSE
 
 ## 免责声明
 

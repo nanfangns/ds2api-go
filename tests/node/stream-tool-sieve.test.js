@@ -91,7 +91,9 @@ test('parseToolCalls supports fenced json and function.arguments string payload'
     '```',
   ].join('\n');
   const calls = parseToolCalls(text, ['read_file']);
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].name, 'read_file');
+  assert.equal(calls[0].input.path, 'README.md');
 });
 
 test('parseToolCalls parses text-kv fallback payload', () => {
@@ -122,19 +124,19 @@ test('parseToolCalls parses multiple text-kv fallback payloads', () => {
   assert.equal(calls[1].name, 'bash');
 });
 
-test('parseStandaloneToolCalls only matches standalone payload and ignores mixed prose', () => {
+test('parseStandaloneToolCalls parses mixed prose payload', () => {
   const mixed = '这里是示例：{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}，请勿执行。';
   const standalone = '{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}';
   const mixedCalls = parseStandaloneToolCalls(mixed, ['read_file']);
   const standaloneCalls = parseStandaloneToolCalls(standalone, ['read_file']);
-  assert.equal(mixedCalls.length, 0);
+  assert.equal(mixedCalls.length, 1);
   assert.equal(standaloneCalls.length, 1);
 });
 
-test('parseStandaloneToolCalls ignores fenced code block tool_call examples', () => {
+test('parseStandaloneToolCalls parses fenced code block tool_call payload', () => {
   const fenced = ['```json', '{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}', '```'].join('\n');
   const calls = parseStandaloneToolCalls(fenced, ['read_file']);
-  assert.equal(calls.length, 0);
+  assert.equal(calls.length, 1);
 });
 
 
@@ -259,28 +261,28 @@ test('sieve emits final tool_calls for split arguments payload without increment
   assert.deepEqual(finalCalls[0].input, { path: 'README.MD', mode: 'head' });
 });
 
-test('sieve keeps tool json as text when leading prose exists (strict mode)', () => {
+test('sieve still emits tool_calls when leading prose exists before tool json', () => {
   const events = runSieve(
     ['我将调用工具。', '{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}'],
     ['read_file'],
   );
   const hasTool = events.some((evt) => (evt.type === 'tool_calls' && evt.calls?.length > 0) || (evt.type === 'tool_call_deltas' && evt.deltas?.length > 0));
   const leakedText = collectText(events);
-  assert.equal(hasTool, false);
+  assert.equal(hasTool, true);
   assert.equal(leakedText.includes('我将调用工具。'), true);
-  assert.equal(leakedText.toLowerCase().includes('tool_calls'), true);
+  assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
 });
 
-test('sieve keeps same-chunk trailing prose payload as text in strict mode', () => {
+test('sieve emits tool_calls and keeps trailing prose when payload and prose share a chunk', () => {
   const events = runSieve(
     ['{"tool_calls":[{"name":"read_file","input":{"path":"README.MD"}}]}然后继续解释。'],
     ['read_file'],
   );
   const hasTool = events.some((evt) => (evt.type === 'tool_calls' && evt.calls?.length > 0) || (evt.type === 'tool_call_deltas' && evt.deltas?.length > 0));
   const leakedText = collectText(events);
-  assert.equal(hasTool, false);
+  assert.equal(hasTool, true);
   assert.equal(leakedText.includes('然后继续解释。'), true);
-  assert.equal(leakedText.toLowerCase().includes('tool_calls'), true);
+  assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
 });
 
 test('formatOpenAIStreamToolCalls reuses ids with the same idStore', () => {
