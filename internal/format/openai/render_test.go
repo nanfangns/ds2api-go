@@ -2,6 +2,7 @@ package openai
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -69,7 +70,7 @@ func TestBuildResponseObjectPromotesMixedProseToolPayloadToFunctionCall(t *testi
 	}
 }
 
-func TestBuildResponseObjectPromotesFencedToolPayloadToFunctionCall(t *testing.T) {
+func TestBuildResponseObjectKeepsFencedToolPayloadAsText(t *testing.T) {
 	obj := BuildResponseObject(
 		"resp_test",
 		"gpt-4o",
@@ -80,17 +81,22 @@ func TestBuildResponseObjectPromotesFencedToolPayloadToFunctionCall(t *testing.T
 	)
 
 	outputText, _ := obj["output_text"].(string)
-	if outputText != "" {
-		t.Fatalf("expected output_text hidden for fenced tool payload, got %q", outputText)
+	if !strings.Contains(outputText, "\"tool_calls\"") {
+		t.Fatalf("expected output_text to preserve fenced tool payload, got %q", outputText)
 	}
 	output, _ := obj["output"].([]any)
 	if len(output) != 1 {
-		t.Fatalf("expected one function_call output item, got %#v", obj["output"])
+		t.Fatalf("expected one message output item, got %#v", obj["output"])
 	}
 	first, _ := output[0].(map[string]any)
-	if first["type"] != "function_call" {
-		t.Fatalf("expected function_call output type, got %#v", first["type"])
+	if first["type"] != "message" {
+		t.Fatalf("expected message output type, got %#v", first["type"])
 	}
+}
+
+// Backward-compatible alias for historical test name used in CI logs.
+func TestBuildResponseObjectPromotesFencedToolPayloadToFunctionCall(t *testing.T) {
+	TestBuildResponseObjectKeepsFencedToolPayloadAsText(t)
 }
 
 func TestBuildResponseObjectReasoningOnlyFallsBackToOutputText(t *testing.T) {

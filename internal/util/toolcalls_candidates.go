@@ -7,7 +7,8 @@ import (
 
 var toolCallPattern = regexp.MustCompile(`\{\s*["']tool_calls["']\s*:\s*\[(.*?)\]\s*\}`)
 var fencedJSONPattern = regexp.MustCompile("(?s)```(?:json)?\\s*(.*?)\\s*```")
-var fencedBlockPattern = regexp.MustCompile("(?s)```.*?```")
+var fencedCodeBlockPattern = regexp.MustCompile("(?s)```[\\s\\S]*?```")
+var markupToolSyntaxPattern = regexp.MustCompile(`(?i)<(?:(?:[a-z0-9_:-]+:)?(?:tool_call|function_call|invoke)\b|(?:[a-z0-9_:-]+:)?function_calls\b|(?:[a-z0-9_:-]+:)?tool_use\b)`)
 
 func buildToolCallCandidates(text string) []string {
 	trimmed := strings.TrimSpace(text)
@@ -28,6 +29,12 @@ func buildToolCallCandidates(text string) []string {
 	last := strings.LastIndex(trimmed, "}")
 	if first >= 0 && last > first {
 		candidates = append(candidates, strings.TrimSpace(trimmed[first:last+1]))
+	}
+	// best-effort array slice: from first '[' to last ']'
+	firstArr := strings.Index(trimmed, "[")
+	lastArr := strings.LastIndex(trimmed, "]")
+	if firstArr >= 0 && lastArr > firstArr {
+		candidates = append(candidates, strings.TrimSpace(trimmed[firstArr:lastArr+1]))
 	}
 
 	// legacy regex extraction fallback
@@ -57,7 +64,7 @@ func extractToolCallObjects(text string) []string {
 	lower := strings.ToLower(text)
 	out := []string{}
 	offset := 0
-	keywords := []string{"tool_calls", "function.name:", "[tool_call_history]"}
+	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]"}
 	for {
 		bestIdx := -1
 		matchedKeyword := ""
@@ -82,12 +89,12 @@ func extractToolCallObjects(text string) []string {
 		if searchLimit < offset {
 			searchLimit = offset
 		}
-		
+
 		start := strings.LastIndex(text[searchLimit:idx], "{")
 		if start >= 0 {
 			start += searchLimit
 		}
-		
+
 		if start < 0 {
 			offset = idx + len(matchedKeyword)
 			continue
@@ -113,7 +120,7 @@ func extractToolCallObjects(text string) []string {
 			}
 			break
 		}
-		
+
 		if !foundObj {
 			offset = idx + len(matchedKeyword)
 		}
@@ -175,9 +182,21 @@ func looksLikeToolExampleContext(text string) bool {
 	return strings.Contains(t, "```")
 }
 
+func shouldSkipToolCallParsingForCodeFenceExample(text string) bool {
+	if !looksLikeToolCallSyntax(text) {
+		return false
+	}
+	stripped := strings.TrimSpace(stripFencedCodeBlocks(text))
+	return !looksLikeToolCallSyntax(stripped)
+}
+
+func looksLikeMarkupToolSyntax(text string) bool {
+	return markupToolSyntaxPattern.MatchString(text)
+}
+
 func stripFencedCodeBlocks(text string) string {
-	if strings.TrimSpace(text) == "" {
+	if text == "" {
 		return ""
 	}
-	return fencedBlockPattern.ReplaceAllString(text, " ")
+	return fencedCodeBlockPattern.ReplaceAllString(text, " ")
 }

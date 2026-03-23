@@ -628,6 +628,7 @@ data: {"type":"message_stop"}
 - `admin`（JWT 过期、默认密码告警等）
 - `runtime`（`account_max_inflight`、`account_max_queue`、`global_max_inflight`）
 - `toolcall` / `responses` / `embeddings`
+- `auto_delete`（`sessions`）
 - `claude_mapping` / `model_aliases`
 - `env_backed`、`needs_vercel_sync`
 
@@ -640,6 +641,7 @@ data: {"type":"message_stop"}
 - `toolcall.mode` / `toolcall.early_emit_confidence`
 - `responses.store_ttl_seconds`
 - `embeddings.provider`
+- `auto_delete.sessions`
 - `claude_mapping`
 - `model_aliases`
 

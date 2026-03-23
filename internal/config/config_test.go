@@ -2,25 +2,23 @@ package config
 
 import (
 	"encoding/base64"
+	"os"
 	"strings"
 	"testing"
 )
 
-func TestAccountIdentifierFallsBackToTokenHash(t *testing.T) {
+func TestAccountIdentifierRequiresEmailOrMobile(t *testing.T) {
 	acc := Account{Token: "example-token-value"}
 	id := acc.Identifier()
-	if !strings.HasPrefix(id, "token:") {
-		t.Fatalf("expected token-prefixed identifier, got %q", id)
-	}
-	if len(id) != len("token:")+16 {
-		t.Fatalf("unexpected identifier length: %d (%q)", len(id), id)
+	if id != "" {
+		t.Fatalf("expected empty identifier when only token is present, got %q", id)
 	}
 }
 
-func TestStoreFindAccountWithTokenOnlyIdentifier(t *testing.T) {
+func TestLoadStoreClearsTokensFromConfigInput(t *testing.T) {
 	t.Setenv("DS2API_CONFIG_JSON", `{
 		"keys":["k1"],
-		"accounts":[{"token":"token-only-account"}]
+		"accounts":[{"email":"u@example.com","password":"p","token":"token-only-account"}]
 	}`)
 
 	store := LoadStore()
@@ -28,22 +26,62 @@ func TestStoreFindAccountWithTokenOnlyIdentifier(t *testing.T) {
 	if len(accounts) != 1 {
 		t.Fatalf("expected 1 account, got %d", len(accounts))
 	}
-	id := accounts[0].Identifier()
-	if id == "" {
-		t.Fatalf("expected synthetic identifier for token-only account")
-	}
-	found, ok := store.FindAccount(id)
-	if !ok {
-		t.Fatalf("expected FindAccount to locate token-only account by synthetic id")
-	}
-	if found.Token != "token-only-account" {
-		t.Fatalf("unexpected token value: %q", found.Token)
+	if accounts[0].Token != "" {
+		t.Fatalf("expected token to be cleared after loading, got %q", accounts[0].Token)
 	}
 }
 
-func TestStoreUpdateAccountTokenKeepsOldAndNewIdentifierResolvable(t *testing.T) {
+func TestLoadStoreDropsLegacyTokenOnlyAccounts(t *testing.T) {
 	t.Setenv("DS2API_CONFIG_JSON", `{
-		"accounts":[{"token":"old-token"}]
+		"accounts":[
+			{"token":"legacy-token-only"},
+			{"email":"u@example.com","password":"p","token":"runtime-token"}
+		]
+	}`)
+
+	store := LoadStore()
+	accounts := store.Accounts()
+	if len(accounts) != 1 {
+		t.Fatalf("expected token-only account to be dropped, got %d accounts", len(accounts))
+	}
+	if accounts[0].Identifier() != "u@example.com" {
+		t.Fatalf("unexpected remaining account: %#v", accounts[0])
+	}
+	if accounts[0].Token != "" {
+		t.Fatalf("expected persisted token to be cleared, got %q", accounts[0].Token)
+	}
+}
+
+func TestLoadStorePreservesFileBackedTokensForRuntime(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "config-*.json")
+	if err != nil {
+		t.Fatalf("create temp config: %v", err)
+	}
+	defer tmp.Close()
+
+	if _, err := tmp.WriteString(`{
+		"accounts":[{"email":"u@example.com","password":"p","token":"persisted-token"}]
+	}`); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	t.Setenv("DS2API_CONFIG_JSON", "")
+	t.Setenv("CONFIG_JSON", "")
+	t.Setenv("DS2API_CONFIG_PATH", tmp.Name())
+
+	store := LoadStore()
+	accounts := store.Accounts()
+	if len(accounts) != 1 {
+		t.Fatalf("expected 1 account, got %d", len(accounts))
+	}
+	if accounts[0].Token != "persisted-token" {
+		t.Fatalf("expected file-backed token preserved for runtime use, got %q", accounts[0].Token)
+	}
+}
+
+func TestStoreUpdateAccountTokenKeepsIdentifierResolvable(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{
+		"accounts":[{"email":"user@example.com","password":"p"}]
 	}`)
 
 	store := LoadStore()
@@ -52,23 +90,12 @@ func TestStoreUpdateAccountTokenKeepsOldAndNewIdentifierResolvable(t *testing.T)
 		t.Fatalf("expected 1 account, got %d", len(before))
 	}
 	oldID := before[0].Identifier()
-	if oldID == "" {
-		t.Fatal("expected old identifier")
-	}
 	if err := store.UpdateAccountToken(oldID, "new-token"); err != nil {
 		t.Fatalf("update token failed: %v", err)
 	}
 
-	after := store.Accounts()
-	newID := after[0].Identifier()
-	if newID == "" || newID == oldID {
-		t.Fatalf("expected changed identifier, old=%q new=%q", oldID, newID)
-	}
-	if got, ok := store.FindAccount(newID); !ok || got.Token != "new-token" {
-		t.Fatalf("expected find by new identifier")
-	}
 	if got, ok := store.FindAccount(oldID); !ok || got.Token != "new-token" {
-		t.Fatalf("expected find by old identifier alias")
+		t.Fatalf("expected find by stable account identifier")
 	}
 }
 
@@ -119,5 +146,41 @@ func TestLoadConfigOnVercelWithoutConfigFileFallsBackToMemory(t *testing.T) {
 	}
 	if len(cfg.Keys) != 0 || len(cfg.Accounts) != 0 {
 		t.Fatalf("expected empty bootstrap config, got keys=%d accounts=%d", len(cfg.Keys), len(cfg.Accounts))
+	}
+}
+
+func TestAccountTestStatusIsRuntimeOnlyAndNotPersisted(t *testing.T) {
+	tmp, err := os.CreateTemp(t.TempDir(), "config-*.json")
+	if err != nil {
+		t.Fatalf("create temp config: %v", err)
+	}
+	defer tmp.Close()
+	if _, err := tmp.WriteString(`{
+		"accounts":[{"email":"u@example.com","password":"p","test_status":"ok"}]
+	}`); err != nil {
+		t.Fatalf("write temp config: %v", err)
+	}
+
+	t.Setenv("DS2API_CONFIG_JSON", "")
+	t.Setenv("CONFIG_JSON", "")
+	t.Setenv("DS2API_CONFIG_PATH", tmp.Name())
+
+	store := LoadStore()
+	if got, ok := store.AccountTestStatus("u@example.com"); ok || got != "" {
+		t.Fatalf("expected no runtime status loaded from config, got %q", got)
+	}
+	if err := store.UpdateAccountTestStatus("u@example.com", "ok"); err != nil {
+		t.Fatalf("update test status: %v", err)
+	}
+	if got, ok := store.AccountTestStatus("u@example.com"); !ok || got != "ok" {
+		t.Fatalf("expected runtime status to be available, got %q (ok=%v)", got, ok)
+	}
+
+	content, err := os.ReadFile(tmp.Name())
+	if err != nil {
+		t.Fatalf("read config: %v", err)
+	}
+	if strings.Contains(string(content), "test_status") {
+		t.Fatalf("expected test_status to stay out of persisted config, got: %s", content)
 	}
 }

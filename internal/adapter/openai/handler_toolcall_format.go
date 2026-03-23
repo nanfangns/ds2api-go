@@ -53,13 +53,13 @@ func injectToolPrompt(messages []map[string]any, tools []any, policy util.ToolCh
 	if len(toolSchemas) == 0 {
 		return messages, names
 	}
-	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\nWhen you need to use tools, output ONLY a JSON code block like this:\n```json\n{\"tool_calls\": [{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}]}\n```\n\n【EXAMPLE】\nUser: Please check the weather in Beijing and Shanghai, and update my todo list.\nAssistant:\n```json\n{\"tool_calls\": [\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Beijing\"}},\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Shanghai\"}},\n  {\"name\": \"update_todo\", \"input\": {\"todos\": [{\"content\": \"Buy milk\"}, {\"content\": \"Write report\"}]}}\n]}\n```\n\nHistory markers in conversation:\n- [TOOL_CALL_HISTORY]...[/TOOL_CALL_HISTORY] means a tool call you already made earlier.\n- [TOOL_RESULT_HISTORY]...[/TOOL_RESULT_HISTORY] means the runtime returned a tool result (not user input).\n\nIMPORTANT:\n1) If calling tools, output ONLY the JSON code block. The response must start with ```json and end with ```.\n2) After receiving a tool result, you MUST use it to produce the final answer.\n3) Only call another tool when the previous result is missing required data or returned an error.\n4) Do not repeat a tool call that is already satisfied by an existing [TOOL_RESULT_HISTORY] block.\n5) JSON SYNTAX STRICTLY REQUIRED: All property names MUST be enclosed in double quotes (e.g., \"name\", not name).\n6) ARRAY FORMAT: If providing a list of items, you MUST enclose them in square brackets `[]` (e.g., \"todos\": [{\"item\": \"a\"}, {\"item\": \"b\"}]). DO NOT output comma-separated objects without brackets."
+	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\nWhen you need to use tools, output ONLY this JSON object format:\n{\"tool_calls\": [{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}]}\n\n【EXAMPLE】\nUser: Please check the weather in Beijing and Shanghai, and update my todo list.\nAssistant:\n{\"tool_calls\": [\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Beijing\"}},\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Shanghai\"}},\n  {\"name\": \"update_todo\", \"input\": {\"todos\": [{\"content\": \"Buy milk\"}, {\"content\": \"Write report\"}]}}\n]}\n\nIMPORTANT:\n1) If calling tools, output ONLY the JSON object above. Do NOT include any extra text.\n2) Do NOT wrap tool-call JSON in markdown/code fences (for example, do not use triple backticks).\n3) After receiving a tool result, you MUST use it to produce the final answer.\n4) Only call another tool when the previous result is missing required data or returned an error.\n5) JSON SYNTAX STRICTLY REQUIRED: All property names MUST be enclosed in double quotes (e.g., \"name\", not name).\n6) ARRAY FORMAT: If providing a list of items, you MUST enclose them in square brackets `[]` (e.g., \"todos\": [{\"item\": \"a\"}, {\"item\": \"b\"}]). DO NOT output comma-separated objects without brackets."
 	if policy.Mode == util.ToolChoiceRequired {
-		toolPrompt += "\n5) For this response, you MUST call at least one tool from the allowed list."
+		toolPrompt += "\n7) For this response, you MUST call at least one tool from the allowed list."
 	}
 	if policy.Mode == util.ToolChoiceForced && strings.TrimSpace(policy.ForcedName) != "" {
-		toolPrompt += "\n5) For this response, you MUST call exactly this tool name: " + strings.TrimSpace(policy.ForcedName)
-		toolPrompt += "\n6) Do not call any other tool."
+		toolPrompt += "\n7) For this response, you MUST call exactly this tool name: " + strings.TrimSpace(policy.ForcedName)
+		toolPrompt += "\n8) Do not call any other tool."
 	}
 
 	for i := range messages {
@@ -111,28 +111,21 @@ func filterIncrementalToolCallDeltasByAllowed(deltas []toolCallDelta, allowedNam
 	if len(deltas) == 0 {
 		return nil
 	}
-	allowed := namesToSet(allowedNames)
-	if len(allowed) == 0 {
-		for _, d := range deltas {
-			if d.Name != "" {
-				seenNames[d.Index] = "__blocked__"
-			}
-		}
-		return nil
-	}
 	out := make([]toolCallDelta, 0, len(deltas))
 	for _, d := range deltas {
 		if d.Name != "" {
-			if _, ok := allowed[d.Name]; !ok {
-				seenNames[d.Index] = "__blocked__"
-				continue
+			if seenNames != nil {
+				seenNames[d.Index] = d.Name
 			}
-			seenNames[d.Index] = d.Name
+			out = append(out, d)
+			continue
+		}
+		if seenNames == nil {
 			out = append(out, d)
 			continue
 		}
 		name := strings.TrimSpace(seenNames[d.Index])
-		if name == "" || name == "__blocked__" {
+		if name == "" {
 			continue
 		}
 		out = append(out, d)

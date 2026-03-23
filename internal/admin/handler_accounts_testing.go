@@ -89,7 +89,15 @@ func runAccountTestsConcurrently(accounts []config.Account, maxConcurrency int, 
 func (h *Handler) testAccount(ctx context.Context, acc config.Account, model, message string) map[string]any {
 	start := time.Now()
 	identifier := acc.Identifier()
-	result := map[string]any{"account": identifier, "success": false, "response_time": 0, "message": "", "model": model, "session_count": 0}
+	result := map[string]any{
+		"account":         identifier,
+		"success":         false,
+		"response_time":   0,
+		"message":         "",
+		"model":           model,
+		"session_count":   0,
+		"config_writable": !h.Store.IsEnvBacked(),
+	}
 	defer func() {
 		status := "failed"
 		if ok, _ := result["success"].(bool); ok {
@@ -97,15 +105,14 @@ func (h *Handler) testAccount(ctx context.Context, acc config.Account, model, me
 		}
 		_ = h.Store.UpdateAccountTestStatus(identifier, status)
 	}()
-	token := strings.TrimSpace(acc.Token)
-	if token == "" {
-		newToken, err := h.DS.Login(ctx, acc)
-		if err != nil {
-			result["message"] = "登录失败: " + err.Error()
-			return result
-		}
-		token = newToken
-		_ = h.Store.UpdateAccountToken(acc.Identifier(), token)
+	token, err := h.DS.Login(ctx, acc)
+	if err != nil {
+		result["message"] = "登录失败: " + err.Error()
+		return result
+	}
+	if err := h.Store.UpdateAccountToken(acc.Identifier(), token); err != nil {
+		result["message"] = "登录成功但写入运行时 token 失败: " + err.Error()
+		return result
 	}
 	authCtx := &authn.RequestAuth{UseConfigToken: false, DeepSeekToken: token}
 	sessionID, err := h.DS.CreateSession(ctx, authCtx, 1)
@@ -117,7 +124,10 @@ func (h *Handler) testAccount(ctx context.Context, acc config.Account, model, me
 		}
 		token = newToken
 		authCtx.DeepSeekToken = token
-		_ = h.Store.UpdateAccountToken(acc.Identifier(), token)
+		if err := h.Store.UpdateAccountToken(acc.Identifier(), token); err != nil {
+			result["message"] = "刷新 token 成功但写入运行时 token 失败: " + err.Error()
+			return result
+		}
 		sessionID, err = h.DS.CreateSession(ctx, authCtx, 1)
 		if err != nil {
 			result["message"] = "创建会话失败: " + err.Error()
@@ -133,7 +143,7 @@ func (h *Handler) testAccount(ctx context.Context, acc config.Account, model, me
 
 	if strings.TrimSpace(message) == "" {
 		result["success"] = true
-		result["message"] = "API 测试成功（仅会话创建）"
+		result["message"] = "Token 刷新成功（登录与会话创建成功）"
 		result["response_time"] = int(time.Since(start).Milliseconds())
 		return result
 	}
@@ -232,20 +242,16 @@ func (h *Handler) deleteAllSessions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 获取 token
-	token := strings.TrimSpace(acc.Token)
-	if token == "" {
-		newToken, err := h.DS.Login(r.Context(), acc)
-		if err != nil {
-			writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "登录失败: " + err.Error()})
-			return
-		}
-		token = newToken
-		_ = h.Store.UpdateAccountToken(acc.Identifier(), token)
+	// 每次先登录刷新一次 token，避免使用过期 token。
+	token, err := h.DS.Login(r.Context(), acc)
+	if err != nil {
+		writeJSON(w, http.StatusOK, map[string]any{"success": false, "message": "登录失败: " + err.Error()})
+		return
 	}
+	_ = h.Store.UpdateAccountToken(acc.Identifier(), token)
 
 	// 删除所有会话
-	err := h.DS.DeleteAllSessionsForToken(r.Context(), token)
+	err = h.DS.DeleteAllSessionsForToken(r.Context(), token)
 	if err != nil {
 		// token 可能过期，尝试重新登录并重试一次
 		newToken, loginErr := h.DS.Login(r.Context(), acc)

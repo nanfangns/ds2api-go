@@ -12,18 +12,43 @@ type Config struct {
 	Toolcall         ToolcallConfig    `json:"toolcall,omitempty"`
 	Responses        ResponsesConfig   `json:"responses,omitempty"`
 	Embeddings       EmbeddingsConfig  `json:"embeddings,omitempty"`
-		AutoDelete       AutoDeleteConfig  `json:"auto_delete"`
-		VercelSyncHash   string            `json:"_vercel_sync_hash,omitempty"`
+	AutoDelete       AutoDeleteConfig  `json:"auto_delete"`
+	VercelSyncHash   string            `json:"_vercel_sync_hash,omitempty"`
 	VercelSyncTime   int64             `json:"_vercel_sync_time,omitempty"`
 	AdditionalFields map[string]any    `json:"-"`
 }
 
 type Account struct {
-	Email      string `json:"email,omitempty"`
-	Mobile     string `json:"mobile,omitempty"`
-	Password   string `json:"password,omitempty"`
-	Token      string `json:"token,omitempty"`
-	TestStatus string `json:"test_status,omitempty"`
+	Email    string `json:"email,omitempty"`
+	Mobile   string `json:"mobile,omitempty"`
+	Password string `json:"password,omitempty"`
+	Token    string `json:"token,omitempty"`
+}
+
+func (c *Config) ClearAccountTokens() {
+	if c == nil {
+		return
+	}
+	for i := range c.Accounts {
+		c.Accounts[i].Token = ""
+	}
+}
+
+// DropInvalidAccounts removes accounts that cannot be addressed by admin APIs
+// (no email and no normalizable mobile). This prevents legacy token-only
+// records from becoming orphaned empty entries after token stripping.
+func (c *Config) DropInvalidAccounts() {
+	if c == nil || len(c.Accounts) == 0 {
+		return
+	}
+	kept := make([]Account, 0, len(c.Accounts))
+	for _, acc := range c.Accounts {
+		if acc.Identifier() == "" {
+			continue
+		}
+		kept = append(kept, acc)
+	}
+	c.Accounts = kept
 }
 
 type CompatConfig struct {

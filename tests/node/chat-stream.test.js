@@ -44,7 +44,7 @@ test('resolveToolcallPolicy respects prepare flags and prepared tool names', () 
     [{ type: 'function', function: { name: 'fallback_tool', parameters: { type: 'object' } } }],
   );
   assert.deepEqual(policy.toolNames, ['prepped_tool']);
-  assert.equal(policy.toolSieveEnabled, false);
+  assert.equal(policy.toolSieveEnabled, true);
   assert.equal(policy.emitEarlyToolDeltas, false);
 });
 
@@ -58,7 +58,7 @@ test('boolDefaultTrue keeps false only when explicitly false', () => {
   assert.equal(boolDefaultTrue(undefined), true);
 });
 
-test('filterIncrementalToolCallDeltasByAllowed blocks unknown name and follow-up args', () => {
+test('filterIncrementalToolCallDeltasByAllowed keeps unknown name and follow-up args', () => {
   const seen = new Map();
   const filtered = filterIncrementalToolCallDeltasByAllowed(
     [
@@ -68,8 +68,11 @@ test('filterIncrementalToolCallDeltasByAllowed blocks unknown name and follow-up
     ['read_file'],
     seen,
   );
-  assert.deepEqual(filtered, []);
-  assert.equal(seen.get(0), '__blocked__');
+  assert.deepEqual(filtered, [
+    { index: 0, name: 'not_in_schema' },
+    { index: 0, arguments: '{"x":1}' },
+  ]);
+  assert.equal(seen.get(0), 'not_in_schema');
 });
 
 test('filterIncrementalToolCallDeltasByAllowed keeps allowed name and args', () => {
@@ -96,6 +99,12 @@ test('incremental and final tool formatting share stable id via idStore', () => 
   assert.equal(incremental.length, 1);
   assert.equal(finalCalls.length, 1);
   assert.equal(incremental[0].id, finalCalls[0].id);
+});
+
+test('formatIncrementalToolCallDeltas drops empty deltas (Go parity)', () => {
+  const idStore = new Map();
+  const formatted = formatIncrementalToolCallDeltas([{ index: 0 }], idStore);
+  assert.deepEqual(formatted, []);
 });
 
 test('parseChunkForContent keeps split response/content fragments inside response array', () => {

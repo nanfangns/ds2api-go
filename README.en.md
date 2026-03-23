@@ -178,6 +178,8 @@ Rebuild after updates: `docker-compose up -d --build`
 2. After deployment, open `/admin` and login with `DS2API_ADMIN_KEY` shown in Zeabur env/template instructions.
 3. Import / edit config in Admin UI (it will be written and persisted to `/data/config.json`).
 
+Note: when Zeabur builds directly from the repo `Dockerfile`, you do not need to pass `BUILD_VERSION`. The image prefers that build arg when provided, and automatically falls back to the repo-root `VERSION` file when it is absent.
+
 ### Option 3: Vercel
 
 1. Fork this repo to your GitHub account
@@ -242,13 +244,11 @@ cp opencode.json.example opencode.json
   "accounts": [
     {
       "email": "user@example.com",
-      "password": "your-password",
-      "token": ""
+      "password": "your-password"
     },
     {
       "mobile": "12345678901",
-      "password": "your-password",
-      "token": ""
+      "password": "your-password"
     }
   ],
   "model_aliases": {
@@ -269,7 +269,7 @@ cp opencode.json.example opencode.json
   "embeddings": {
     "provider": "deterministic"
   },
-  "claude_model_mapping": {
+  "claude_mapping": {
     "fast": "deepseek-chat",
     "slow": "deepseek-reasoner"
   },
@@ -280,21 +280,25 @@ cp opencode.json.example opencode.json
     "account_max_inflight": 2,
     "account_max_queue": 0,
     "global_max_inflight": 0
+  },
+  "auto_delete": {
+    "sessions": false
   }
 }
 ```
 
 - `keys`: API access keys; clients authenticate via `Authorization: Bearer <key>`
 - `accounts`: DeepSeek account list, supports `email` or `mobile` login
-- `token`: Leave empty for auto-login on first request; or pre-fill an existing token
+- `token`: Even if set in `config.json`, it is cleared during load (DS2API does not read persisted tokens from config); runtime tokens are maintained/refreshed in memory only
 - `model_aliases`: Map common model names (GPT/Codex/Claude) to DeepSeek models
 - `compat.wide_input_strict_output`: Keep `true` (current default policy)
 - `toolcall`: Fixed to feature matching + high-confidence early emit
 - `responses.store_ttl_seconds`: In-memory TTL for `/v1/responses/{id}`
 - `embeddings.provider`: Embeddings provider (`deterministic/mock/builtin` built-in)
-- `claude_model_mapping`: Maps `fast`/`slow` suffixes to corresponding DeepSeek models
+- `claude_mapping`: Maps `fast`/`slow` suffixes to corresponding DeepSeek models (still compatible with `claude_model_mapping`)
 - `admin`: Admin panel settings (JWT expiry, password hash, etc.), hot-reloadable via Admin Settings API
-- `runtime`: Runtime parameters (concurrency limits, queue sizes), hot-reloadable via Admin Settings API
+- `runtime`: Runtime parameters (concurrency limits, queue sizes), hot-reloadable via Admin Settings API; `account_max_queue=0`/`global_max_inflight=0` means auto-calculate from recommended values
+- `auto_delete.sessions`: Whether to auto-delete DeepSeek sessions after request completion (default `false`, hot-reloadable via Settings)
 
 ### Environment Variables
 

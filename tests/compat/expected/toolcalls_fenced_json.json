@@ -1,12 +1,5 @@
 {
-  "calls": [
-    {
-      "name": "read_file",
-      "input": {
-        "path": "README.MD"
-      }
-    }
-  ],
+  "calls": [],
   "sawToolCallSyntax": true,
   "rejectedByPolicy": false,
   "rejectedToolNames": []

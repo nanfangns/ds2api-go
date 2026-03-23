@@ -77,7 +77,7 @@ func TestTestAccount_BatchModeOnlyCreatesSession(t *testing.T) {
 		t.Fatalf("expected success=true, got %#v", result)
 	}
 	msg, _ := result["message"].(string)
-	if !strings.Contains(msg, "仅会话创建") {
+	if !strings.Contains(msg, "Token 刷新成功") {
 		t.Fatalf("expected session-only success message, got %q", msg)
 	}
 	if ds.loginCalls != 1 || ds.createSessionCalls != 1 {
@@ -93,8 +93,9 @@ func TestTestAccount_BatchModeOnlyCreatesSession(t *testing.T) {
 	if updated.Token != "new-token" {
 		t.Fatalf("expected refreshed token to be persisted, got %q", updated.Token)
 	}
-	if updated.TestStatus != "ok" {
-		t.Fatalf("expected test status ok, got %q", updated.TestStatus)
+	testStatus, ok := store.AccountTestStatus("batch@example.com")
+	if !ok || testStatus != "ok" {
+		t.Fatalf("expected runtime test status ok, got %q (ok=%v)", testStatus, ok)
 	}
 }
 
@@ -118,8 +119,8 @@ func TestDeleteAllSessions_RetryWithReloginOnDeleteFailure(t *testing.T) {
 	if ok, _ := resp["success"].(bool); !ok {
 		t.Fatalf("expected success response, got %#v", resp)
 	}
-	if ds.loginCalls != 1 {
-		t.Fatalf("expected relogin once, got %d", ds.loginCalls)
+	if ds.loginCalls != 2 {
+		t.Fatalf("expected initial login plus relogin, got %d", ds.loginCalls)
 	}
 	if ds.deleteAllSessionsCalls != 2 {
 		t.Fatalf("expected delete called twice, got %d", ds.deleteAllSessionsCalls)

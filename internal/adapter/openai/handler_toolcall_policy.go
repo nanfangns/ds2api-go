@@ -2,12 +2,6 @@ package openai
 
 import "strings"
 
-func applyOpenAIChatPassThrough(req map[string]any, payload map[string]any) {
-	for k, v := range collectOpenAIChatPassThrough(req) {
-		payload[k] = v
-	}
-}
-
 func (h *Handler) toolcallFeatureMatchEnabled() bool {
 	if h == nil || h.Store == nil {
 		return true

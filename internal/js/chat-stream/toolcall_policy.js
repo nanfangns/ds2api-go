@@ -8,12 +8,15 @@ const {
 
 function resolveToolcallPolicy(prepBody, payloadTools) {
   const preparedToolNames = normalizePreparedToolNames(prepBody && prepBody.tool_names);
-  const toolNames = preparedToolNames.length > 0 ? preparedToolNames : extractToolNames(payloadTools);
+  let toolNames = preparedToolNames.length > 0 ? preparedToolNames : extractToolNames(payloadTools);
+  if (toolNames.length === 0 && Array.isArray(payloadTools) && payloadTools.length > 0) {
+    toolNames = ['__any_tool__'];
+  }
   const featureMatchEnabled = boolDefaultTrue(prepBody && prepBody.toolcall_feature_match);
-  const emitEarlyToolDeltas = boolDefaultTrue(prepBody && prepBody.toolcall_early_emit_high);
+  const emitEarlyToolDeltas = featureMatchEnabled && boolDefaultTrue(prepBody && prepBody.toolcall_early_emit_high);
   return {
     toolNames,
-    toolSieveEnabled: toolNames.length > 0 && featureMatchEnabled,
+    toolSieveEnabled: toolNames.length > 0,
     emitEarlyToolDeltas,
   };
 }
@@ -60,6 +63,9 @@ function formatIncrementalToolCallDeltas(deltas, idStore) {
     if (typeof d.arguments === 'string' && d.arguments !== '') {
       fn.arguments = d.arguments;
     }
+    if (Object.keys(fn).length === 0) {
+      continue;
+    }
     if (Object.keys(fn).length > 0) {
       item.function = fn;
     }
@@ -73,17 +79,6 @@ function filterIncrementalToolCallDeltasByAllowed(deltas, allowedNames, seenName
     return [];
   }
   const seen = seenNames instanceof Map ? seenNames : new Map();
-  const allowed = new Set((allowedNames || []).filter((name) => asString(name) !== ''));
-  if (allowed.size === 0) {
-    for (const d of deltas) {
-      if (d && typeof d === 'object' && asString(d.name)) {
-        const index = Number.isInteger(d.index) ? d.index : 0;
-        seen.set(index, '__blocked__');
-      }
-    }
-    return [];
-  }
-
   const out = [];
   for (const d of deltas) {
     if (!d || typeof d !== 'object') {
@@ -92,16 +87,12 @@ function filterIncrementalToolCallDeltasByAllowed(deltas, allowedNames, seenName
     const index = Number.isInteger(d.index) ? d.index : 0;
     const name = asString(d.name);
     if (name) {
-      if (!allowed.has(name)) {
-        seen.set(index, '__blocked__');
-        continue;
-      }
       seen.set(index, name);
       out.push(d);
       continue;
     }
     const existing = asString(seen.get(index));
-    if (!existing || existing === '__blocked__') {
+    if (!existing) {
       continue;
     }
     out.push(d);

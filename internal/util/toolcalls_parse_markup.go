@@ -15,6 +15,10 @@ var antmlArgumentPattern = regexp.MustCompile(`(?is)<(?:[a-z0-9_]+:)?argument\s+
 var antmlParametersPattern = regexp.MustCompile(`(?is)<(?:[a-z0-9_]+:)?parameters\s*>\s*(\{.*?\})\s*</(?:[a-z0-9_]+:)?parameters>`)
 var invokeCallPattern = regexp.MustCompile(`(?is)<invoke\s+name="([^"]+)"\s*>(.*?)</invoke>`)
 var invokeParamPattern = regexp.MustCompile(`(?is)<parameter\s+name="([^"]+)"\s*>\s*(.*?)\s*</parameter>`)
+var toolUseFunctionPattern = regexp.MustCompile(`(?is)<tool_use>\s*<function\s+name="([^"]+)"\s*>(.*?)</function>\s*</tool_use>`)
+var toolUseNameParametersPattern = regexp.MustCompile(`(?is)<tool_use>\s*<tool_name>\s*([^<]+?)\s*</tool_name>\s*<parameters>\s*(.*?)\s*</parameters>\s*</tool_use>`)
+var toolUseFunctionNameParametersPattern = regexp.MustCompile(`(?is)<tool_use>\s*<function_name>\s*([^<]+?)\s*</function_name>\s*<parameters>\s*(.*?)\s*</parameters>\s*</tool_use>`)
+var toolUseToolNameBodyPattern = regexp.MustCompile(`(?is)<tool_use>\s*<tool_name>\s*([^<]+?)\s*</tool_name>\s*(.*?)\s*</tool_use>`)
 
 func parseXMLToolCalls(text string) []ParsedToolCall {
 	matches := xmlToolCallPattern.FindAllString(text, -1)
@@ -36,6 +40,18 @@ func parseXMLToolCalls(text string) []ParsedToolCall {
 		return calls
 	}
 	if call, ok := parseInvokeFunctionCallStyle(text); ok {
+		return []ParsedToolCall{call}
+	}
+	if call, ok := parseToolUseFunctionStyle(text); ok {
+		return []ParsedToolCall{call}
+	}
+	if call, ok := parseToolUseNameParametersStyle(text); ok {
+		return []ParsedToolCall{call}
+	}
+	if call, ok := parseToolUseFunctionNameParametersStyle(text); ok {
+		return []ParsedToolCall{call}
+	}
+	if call, ok := parseToolUseToolNameBodyStyle(text); ok {
 		return []ParsedToolCall{call}
 	}
 	return nil
@@ -227,6 +243,128 @@ func parseInvokeFunctionCallStyle(text string) (ParsedToolCall, bool) {
 		}
 	}
 	return ParsedToolCall{Name: name, Input: input}, true
+}
+
+func parseToolUseFunctionStyle(text string) (ParsedToolCall, bool) {
+	m := toolUseFunctionPattern.FindStringSubmatch(text)
+	if len(m) < 3 {
+		return ParsedToolCall{}, false
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" {
+		return ParsedToolCall{}, false
+	}
+	body := m[2]
+	input := map[string]any{}
+	for _, pm := range invokeParamPattern.FindAllStringSubmatch(body, -1) {
+		if len(pm) < 3 {
+			continue
+		}
+		k := strings.TrimSpace(pm[1])
+		v := strings.TrimSpace(pm[2])
+		if k != "" {
+			input[k] = v
+		}
+	}
+	return ParsedToolCall{Name: name, Input: input}, true
+}
+
+func parseToolUseNameParametersStyle(text string) (ParsedToolCall, bool) {
+	m := toolUseNameParametersPattern.FindStringSubmatch(text)
+	if len(m) < 3 {
+		return ParsedToolCall{}, false
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" {
+		return ParsedToolCall{}, false
+	}
+	raw := strings.TrimSpace(m[2])
+	input := map[string]any{}
+	if raw != "" {
+		if parsed := parseToolCallInput(raw); len(parsed) > 0 {
+			input = parsed
+		} else if kv := parseMarkupKVObject(raw); len(kv) > 0 {
+			input = kv
+		}
+	}
+	return ParsedToolCall{Name: name, Input: input}, true
+}
+
+func parseToolUseFunctionNameParametersStyle(text string) (ParsedToolCall, bool) {
+	m := toolUseFunctionNameParametersPattern.FindStringSubmatch(text)
+	if len(m) < 3 {
+		return ParsedToolCall{}, false
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" {
+		return ParsedToolCall{}, false
+	}
+	raw := strings.TrimSpace(m[2])
+	input := map[string]any{}
+	if raw != "" {
+		if parsed := parseToolCallInput(raw); len(parsed) > 0 {
+			input = parsed
+		} else if kv := parseMarkupKVObject(raw); len(kv) > 0 {
+			input = kv
+		}
+	}
+	return ParsedToolCall{Name: name, Input: input}, true
+}
+
+func parseToolUseToolNameBodyStyle(text string) (ParsedToolCall, bool) {
+	m := toolUseToolNameBodyPattern.FindStringSubmatch(text)
+	if len(m) < 3 {
+		return ParsedToolCall{}, false
+	}
+	name := strings.TrimSpace(m[1])
+	if name == "" {
+		return ParsedToolCall{}, false
+	}
+	body := strings.TrimSpace(m[2])
+	input := map[string]any{}
+	if body != "" {
+		if kv := parseXMLChildKV(body); len(kv) > 0 {
+			input = kv
+		} else if kv := parseMarkupKVObject(body); len(kv) > 0 {
+			input = kv
+		} else if parsed := parseToolCallInput(body); len(parsed) > 0 {
+			input = parsed
+		}
+	}
+	return ParsedToolCall{Name: name, Input: input}, true
+}
+
+func parseXMLChildKV(body string) map[string]any {
+	trimmed := strings.TrimSpace(body)
+	if trimmed == "" {
+		return nil
+	}
+	dec := xml.NewDecoder(strings.NewReader("<root>" + trimmed + "</root>"))
+	out := map[string]any{}
+	for {
+		tok, err := dec.Token()
+		if err != nil {
+			break
+		}
+		start, ok := tok.(xml.StartElement)
+		if !ok || strings.EqualFold(start.Name.Local, "root") {
+			continue
+		}
+		var v string
+		if err := dec.DecodeElement(&v, &start); err != nil {
+			continue
+		}
+		key := strings.TrimSpace(start.Name.Local)
+		val := strings.TrimSpace(v)
+		if key == "" || val == "" {
+			continue
+		}
+		out[key] = val
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }
 
 func asString(v any) string {

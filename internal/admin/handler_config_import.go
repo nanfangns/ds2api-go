@@ -43,6 +43,7 @@ func (h *Handler) configImport(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
 	}
+	incoming.ClearAccountTokens()
 
 	importedKeys, importedAccounts := 0, 0
 	err = h.Store.Update(func(c *config.Config) error {
@@ -180,6 +181,7 @@ func (h *Handler) configImport(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) computeSyncHash() string {
 	snap := h.Store.Snapshot().Clone()
+	snap.ClearAccountTokens()
 	snap.VercelSyncHash = ""
 	snap.VercelSyncTime = 0
 	b, _ := json.Marshal(snap)

@@ -12,11 +12,7 @@ is_entry_file() {
   case "$1" in
     api/chat-stream.js|\
     internal/js/helpers/stream-tool-sieve.js|\
-    webui/src/App.jsx|\
-    webui/src/components/AccountManager.jsx|\
-    webui/src/components/ApiTester.jsx|\
-    webui/src/components/Settings.jsx|\
-    webui/src/components/VercelSync.jsx)
+    webui/src/App.jsx)
       return 0
       ;;
   esac

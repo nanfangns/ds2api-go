@@ -44,11 +44,11 @@ func TestBuildOpenAIFinalPrompt_HandlerPathIncludesToolRoundtripSemantics(t *tes
 	if len(toolNames) != 1 || toolNames[0] != "get_weather" {
 		t.Fatalf("unexpected tool names: %#v", toolNames)
 	}
-	if !strings.Contains(finalPrompt, "tool_call_id: call_1") ||
-		!strings.Contains(finalPrompt, "function.name: get_weather") ||
-		!strings.Contains(finalPrompt, "[TOOL_RESULT_HISTORY]") ||
-		!strings.Contains(finalPrompt, `"condition":"sunny"`) {
-		t.Fatalf("handler finalPrompt missing tool roundtrip semantics: %q", finalPrompt)
+	if !strings.Contains(finalPrompt, `"condition":"sunny"`) {
+		t.Fatalf("handler finalPrompt should preserve tool output content: %q", finalPrompt)
+	}
+	if strings.Contains(finalPrompt, "[TOOL_CALL_HISTORY]") || strings.Contains(finalPrompt, "[TOOL_RESULT_HISTORY]") {
+		t.Fatalf("handler finalPrompt should not include synthetic history markers: %q", finalPrompt)
 	}
 }
 
@@ -77,7 +77,10 @@ func TestBuildOpenAIFinalPrompt_VercelPreparePathKeepsFinalAnswerInstruction(t *
 	if !strings.Contains(finalPrompt, "Only call another tool when the previous result is missing required data or returned an error.") {
 		t.Fatalf("vercel prepare finalPrompt missing retry guard instruction: %q", finalPrompt)
 	}
-	if !strings.Contains(finalPrompt, "[TOOL_RESULT_HISTORY]") {
-		t.Fatalf("vercel prepare finalPrompt missing history marker instruction: %q", finalPrompt)
+	if !strings.Contains(finalPrompt, "Do NOT wrap tool-call JSON in markdown/code fences") {
+		t.Fatalf("vercel prepare finalPrompt missing no-fence instruction: %q", finalPrompt)
+	}
+	if strings.Contains(finalPrompt, "```json") {
+		t.Fatalf("vercel prepare finalPrompt should not require fenced json tool calls: %q", finalPrompt)
 	}
 }

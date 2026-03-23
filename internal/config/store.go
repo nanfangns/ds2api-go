@@ -17,6 +17,7 @@ type Store struct {
 	fromEnv bool
 	keyMap  map[string]struct{} // O(1) API key lookup index
 	accMap  map[string]int      // O(1) account lookup: identifier -> slice index
+	accTest map[string]string   // runtime-only account test status cache
 }
 
 func LoadStore() *Store {
@@ -39,6 +40,8 @@ func loadConfig() (Config, bool, error) {
 	}
 	if rawCfg != "" {
 		cfg, err := parseConfigString(rawCfg)
+		cfg.ClearAccountTokens()
+		cfg.DropInvalidAccounts()
 		return cfg, true, err
 	}
 
@@ -54,6 +57,12 @@ func loadConfig() (Config, bool, error) {
 	var cfg Config
 	if err := json.Unmarshal(content, &cfg); err != nil {
 		return Config{}, false, err
+	}
+	cfg.DropInvalidAccounts()
+	if strings.Contains(string(content), `"test_status"`) && !IsVercel() {
+		if b, err := json.MarshalIndent(cfg, "", "  "); err == nil {
+			_ = os.WriteFile(ConfigPath(), b, 0o644)
+		}
 	}
 	if IsVercel() {
 		// Vercel filesystem is ephemeral/read-only for runtime writes; avoid save errors.
@@ -105,8 +114,19 @@ func (s *Store) UpdateAccountTestStatus(identifier, status string) error {
 	if !ok {
 		return errors.New("account not found")
 	}
-	s.cfg.Accounts[idx].TestStatus = status
-	return s.saveLocked()
+	s.setAccountTestStatusLocked(s.cfg.Accounts[idx], status, identifier)
+	return nil
+}
+
+func (s *Store) AccountTestStatus(identifier string) (string, bool) {
+	identifier = strings.TrimSpace(identifier)
+	if identifier == "" {
+		return "", false
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	status, ok := s.accTest[identifier]
+	return status, ok
 }
 
 func (s *Store) UpdateAccountToken(identifier, token string) error {
@@ -161,7 +181,9 @@ func (s *Store) Save() error {
 		Logger.Info("[save_config] source from env, skip write")
 		return nil
 	}
-	b, err := json.MarshalIndent(s.cfg, "", "  ")
+	persistCfg := s.cfg.Clone()
+	persistCfg.ClearAccountTokens()
+	b, err := json.MarshalIndent(persistCfg, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -173,7 +195,9 @@ func (s *Store) saveLocked() error {
 		Logger.Info("[save_config] source from env, skip write")
 		return nil
 	}
-	b, err := json.MarshalIndent(s.cfg, "", "  ")
+	persistCfg := s.cfg.Clone()
+	persistCfg.ClearAccountTokens()
+	b, err := json.MarshalIndent(persistCfg, "", "  ")
 	if err != nil {
 		return err
 	}
@@ -197,7 +221,9 @@ func (s *Store) SetVercelSync(hash string, ts int64) error {
 func (s *Store) ExportJSONAndBase64() (string, string, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	b, err := json.Marshal(s.cfg)
+	exportCfg := s.cfg.Clone()
+	exportCfg.ClearAccountTokens()
+	b, err := json.Marshal(exportCfg)
 	if err != nil {
 		return "", "", err
 	}

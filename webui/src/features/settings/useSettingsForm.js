@@ -222,14 +222,59 @@ export function useSettingsForm({ apiFetch, t, onMessage, onRefresh, onForceLogo
             const { res, data } = await getExportData(apiFetch)
             if (!res.ok) {
                 onMessage('error', data.detail || t('settings.exportFailed'))
-                return
+                return null
             }
             setExportData(data)
             onMessage('success', t('settings.exportLoaded'))
+            return data
         } catch (_e) {
             onMessage('error', t('settings.exportFailed'))
+            return null
         }
     }, [apiFetch, onMessage, t])
+
+    const downloadExportFile = useCallback(async () => {
+        let latest = exportData
+        if (!latest?.json) {
+            const loaded = await loadExportData()
+            if (!loaded) {
+                return
+            }
+            latest = loaded
+        }
+        const jsonText = String(latest?.json || '').trim()
+        if (!jsonText) {
+            onMessage('error', t('settings.exportFailed'))
+            return
+        }
+        const blob = new Blob([jsonText], { type: 'application/json;charset=utf-8' })
+        const url = URL.createObjectURL(blob)
+        const now = new Date()
+        const pad = (n) => String(n).padStart(2, '0')
+        const filename = `ds2api-config-backup-${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}.json`
+        const link = document.createElement('a')
+        link.href = url
+        link.download = filename
+        document.body.appendChild(link)
+        link.click()
+        document.body.removeChild(link)
+        URL.revokeObjectURL(url)
+        onMessage('success', t('settings.exportDownloaded'))
+    }, [exportData, loadExportData, onMessage, t])
+
+    const loadImportFile = useCallback((file) => {
+        if (!file) return
+        const reader = new FileReader()
+        reader.onload = () => {
+            const text = String(reader.result || '')
+            setImportText(text)
+            onMessage('success', t('settings.importFileLoaded'))
+        }
+        reader.onerror = () => {
+            onMessage('error', t('settings.importFileReadFailed'))
+        }
+        reader.readAsText(file, 'utf-8')
+    }, [onMessage, t])
 
     const doImport = useCallback(async () => {
         if (!String(importText || '').trim()) {
@@ -290,6 +335,8 @@ export function useSettingsForm({ apiFetch, t, onMessage, onRefresh, onForceLogo
         saveSettings,
         updatePassword,
         loadExportData,
+        downloadExportFile,
+        loadImportFile,
         doImport,
     }
 }

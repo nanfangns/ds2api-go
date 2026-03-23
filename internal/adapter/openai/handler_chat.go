@@ -105,7 +105,7 @@ func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, re
 	result := sse.CollectStream(resp, thinkingEnabled, true)
 
 	finalThinking := result.Thinking
-	finalText := result.Text
+	finalText := sanitizeLeakedToolHistory(result.Text)
 	respBody := openaifmt.BuildChatCompletion(completionID, model, finalPrompt, finalThinking, finalText, toolNames)
 	writeJSON(w, http.StatusOK, respBody)
 }
@@ -128,8 +128,8 @@ func (h *Handler) handleStream(w http.ResponseWriter, r *http.Request, resp *htt
 	}
 
 	created := time.Now().Unix()
-	bufferToolContent := len(toolNames) > 0 && h.toolcallFeatureMatchEnabled()
-	emitEarlyToolDeltas := h.toolcallEarlyEmitHighConfidence()
+	bufferToolContent := len(toolNames) > 0
+	emitEarlyToolDeltas := h.toolcallFeatureMatchEnabled() && h.toolcallEarlyEmitHighConfidence()
 	initialType := "text"
 	if thinkingEnabled {
 		initialType = "thinking"

@@ -36,6 +36,8 @@ export default function SettingsContainer({ onRefresh, onMessage, authFetch, onF
         saveSettings,
         updatePassword,
         loadExportData,
+        downloadExportFile,
+        loadImportFile,
         doImport,
     } = useSettingsForm({
         apiFetch,
@@ -102,7 +104,9 @@ export default function SettingsContainer({ onRefresh, onMessage, authFetch, onF
                 setImportMode={setImportMode}
                 importing={importing}
                 onLoadExportData={loadExportData}
+                onDownloadExportFile={downloadExportFile}
                 onImport={doImport}
+                onImportFileChange={loadImportFile}
                 importText={importText}
                 setImportText={setImportText}
                 exportData={exportData}

@@ -50,9 +50,6 @@ func (h *Handler) updateConfig(w http.ResponseWriter, r *http.Request) {
 					if strings.TrimSpace(acc.Password) == "" {
 						acc.Password = prev.Password
 					}
-					if strings.TrimSpace(acc.Token) == "" {
-						acc.Token = prev.Token
-					}
 				}
 				seen[key] = struct{}{}
 				accounts = append(accounts, acc)

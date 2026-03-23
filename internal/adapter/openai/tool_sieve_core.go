@@ -167,7 +167,7 @@ func findToolSegmentStart(s string) int {
 		return -1
 	}
 	lower := strings.ToLower(s)
-	keywords := []string{"tool_calls", "function.name:", "[tool_call_history]"}
+	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]", "[tool_result_history]"}
 	bestKeyIdx := -1
 	for _, kw := range keywords {
 		idx := strings.Index(lower, kw)
@@ -182,6 +182,9 @@ func findToolSegmentStart(s string) int {
 	if start < 0 {
 		start = bestKeyIdx
 	}
+	if fenceStart, ok := openFenceStartBefore(s, start); ok {
+		return fenceStart
+	}
 	return start
 }
 
@@ -191,21 +194,23 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 		return "", nil, "", false
 	}
 	lower := strings.ToLower(captured)
-	
 	keyIdx := -1
-	keywords := []string{"tool_calls", "function.name:", "[tool_call_history]"}
+	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]", "[tool_result_history]"}
 	for _, kw := range keywords {
 		idx := strings.Index(lower, kw)
 		if idx >= 0 && (keyIdx < 0 || idx < keyIdx) {
 			keyIdx = idx
 		}
 	}
-	
+
 	if keyIdx < 0 {
 		return "", nil, "", false
 	}
 	start := strings.LastIndex(captured[:keyIdx], "{")
 	if start < 0 {
+		if blockStart, blockEnd, ok := extractToolHistoryBlock(captured, keyIdx); ok {
+			return captured[:blockStart], nil, captured[blockEnd:], true
+		}
 		start = keyIdx
 	}
 	obj, end, ok := extractJSONObjectFrom(captured, start)
@@ -226,5 +231,70 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 		// For now, keep the original logic but rely on loose JSON repair.
 		return captured, nil, "", true
 	}
+	prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
 	return prefixPart, parsed.Calls, suffixPart, true
+}
+
+func extractToolHistoryBlock(captured string, keyIdx int) (start int, end int, ok bool) {
+	if keyIdx < 0 || keyIdx >= len(captured) {
+		return 0, 0, false
+	}
+	rest := strings.ToLower(captured[keyIdx:])
+	switch {
+	case strings.HasPrefix(rest, "[tool_call_history]"):
+		closeTag := "[/tool_call_history]"
+		closeIdx := strings.Index(rest, closeTag)
+		if closeIdx < 0 {
+			return 0, 0, false
+		}
+		return keyIdx, keyIdx + closeIdx + len(closeTag), true
+	case strings.HasPrefix(rest, "[tool_result_history]"):
+		closeTag := "[/tool_result_history]"
+		closeIdx := strings.Index(rest, closeTag)
+		if closeIdx < 0 {
+			return 0, 0, false
+		}
+		return keyIdx, keyIdx + closeIdx + len(closeTag), true
+	default:
+		return 0, 0, false
+	}
+}
+
+func trimWrappingJSONFence(prefix, suffix string) (string, string) {
+	trimmedPrefix := strings.TrimRight(prefix, " \t\r\n")
+	fenceIdx := strings.LastIndex(trimmedPrefix, "```")
+	if fenceIdx < 0 {
+		return prefix, suffix
+	}
+	// Only strip when the trailing fence in prefix behaves like an opening fence.
+	// A legitimate closing fence before a standalone tool JSON must be preserved.
+	if strings.Count(trimmedPrefix[:fenceIdx+3], "```")%2 == 0 {
+		return prefix, suffix
+	}
+	fenceHeader := strings.TrimSpace(trimmedPrefix[fenceIdx+3:])
+	if fenceHeader != "" && !strings.EqualFold(fenceHeader, "json") {
+		return prefix, suffix
+	}
+
+	trimmedSuffix := strings.TrimLeft(suffix, " \t\r\n")
+	if !strings.HasPrefix(trimmedSuffix, "```") {
+		return prefix, suffix
+	}
+	consumedLeading := len(suffix) - len(trimmedSuffix)
+	return trimmedPrefix[:fenceIdx], suffix[consumedLeading+3:]
+}
+
+func openFenceStartBefore(s string, pos int) (int, bool) {
+	if pos <= 0 || pos > len(s) {
+		return -1, false
+	}
+	segment := s[:pos]
+	lastFence := strings.LastIndex(segment, "```")
+	if lastFence < 0 {
+		return -1, false
+	}
+	if strings.Count(segment, "```")%2 == 1 {
+		return lastFence, true
+	}
+	return -1, false
 }

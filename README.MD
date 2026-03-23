@@ -178,6 +178,8 @@ docker-compose logs -f
 2. 部署完成后访问 `/admin`，使用 Zeabur 环境变量/模板指引中的 `DS2API_ADMIN_KEY` 登录。
 3. 在管理台导入/编辑配置（会写入并持久化到 `/data/config.json`）。
 
+说明：Zeabur 使用仓库内 `Dockerfile` 直接构建时，不需要额外传入 `BUILD_VERSION`；镜像会优先读取该构建参数，未提供时自动回退到仓库根目录的 `VERSION` 文件。
+
 ### 方式三：Vercel 部署
 
 1. Fork 仓库到自己的 GitHub
@@ -242,13 +244,11 @@ cp opencode.json.example opencode.json
   "accounts": [
     {
       "email": "user@example.com",
-      "password": "your-password",
-      "token": ""
+      "password": "your-password"
     },
     {
       "mobile": "12345678901",
-      "password": "your-password",
-      "token": ""
+      "password": "your-password"
     }
   ],
   "model_aliases": {
@@ -269,7 +269,7 @@ cp opencode.json.example opencode.json
   "embeddings": {
     "provider": "deterministic"
   },
-  "claude_model_mapping": {
+  "claude_mapping": {
     "fast": "deepseek-chat",
     "slow": "deepseek-reasoner"
   },
@@ -280,21 +280,25 @@ cp opencode.json.example opencode.json
     "account_max_inflight": 2,
     "account_max_queue": 0,
     "global_max_inflight": 0
+  },
+  "auto_delete": {
+    "sessions": false
   }
 }
 ```
 
 - `keys`：API 访问密钥列表，客户端通过 `Authorization: Bearer <key>` 鉴权
 - `accounts`：DeepSeek 账号列表，支持 `email` 或 `mobile` 登录
-- `token`：留空则首次请求时自动登录获取；也可预填已有 token
+- `token`：配置文件中即使填写也会在加载时被清空（不会从 `config.json` 读取 token）；实际 token 仅在运行时内存中维护并自动刷新
 - `model_aliases`：常见模型名（如 GPT/Codex/Claude）到 DeepSeek 模型的映射
 - `compat.wide_input_strict_output`：建议保持 `true`（当前实现默认宽进严出）
 - `toolcall`：固定采用特征匹配 + 高置信早发策略
 - `responses.store_ttl_seconds`：`/v1/responses/{id}` 的内存缓存 TTL
 - `embeddings.provider`：embedding 提供方（当前内置 `deterministic/mock/builtin`）
-- `claude_model_mapping`：字典中 `fast`/`slow` 后缀映射到对应 DeepSeek 模型
+- `claude_mapping`：字典中 `fast`/`slow` 后缀映射到对应 DeepSeek 模型（兼容读取 `claude_model_mapping`）
 - `admin`：管理后台设置（JWT 过期时间、密码哈希等），可通过 Admin Settings API 热更新
-- `runtime`：运行时参数（并发限制、队列大小），可通过 Admin Settings API 热更新
+- `runtime`：运行时参数（并发限制、队列大小），可通过 Admin Settings API 热更新；`account_max_queue=0`/`global_max_inflight=0` 表示按推荐值自动计算
+- `auto_delete.sessions`：是否在请求结束后自动清理 DeepSeek 会话（默认 `false`，可在 Settings 热更新）
 
 ### 环境变量
 

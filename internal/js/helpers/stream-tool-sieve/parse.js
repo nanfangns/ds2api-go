@@ -8,24 +8,30 @@ const {
   parseToolCallsPayload,
   parseMarkupToolCalls,
   parseTextKVToolCalls,
+  stripFencedCodeBlocks,
 } = require('./parse_payload');
+const { TOOL_SEGMENT_KEYWORDS } = require('./tool-keywords');
 
 const TOOL_NAME_LOOSE_PATTERN = /[^a-z0-9]+/g;
+const TOOL_MARKUP_PREFIXES = ['<tool_call', '<function_call', '<invoke'];
 
 function extractToolNames(tools) {
   if (!Array.isArray(tools) || tools.length === 0) {
     return [];
   }
   const out = [];
+  const seen = new Set();
   for (const t of tools) {
     if (!t || typeof t !== 'object') {
       continue;
     }
     const fn = t.function && typeof t.function === 'object' ? t.function : t;
     const name = toStringSafe(fn.name);
-    // Keep parity with Go injectToolPrompt: object tools without name still
-    // enter tool mode via fallback name "unknown".
-    out.push(name || 'unknown');
+    if (!name || seen.has(name)) {
+      continue;
+    }
+    seen.add(name);
+    out.push(name);
   }
   return out;
 }
@@ -41,6 +47,9 @@ function parseToolCallsDetailed(text, toolNames) {
     return result;
   }
   result.sawToolCallSyntax = looksLikeToolCallSyntax(normalized);
+  if (shouldSkipToolCallParsingForCodeFenceExample(normalized)) {
+    return result;
+  }
 
   const candidates = buildToolCallCandidates(normalized);
   let parsed = [];
@@ -86,6 +95,9 @@ function parseStandaloneToolCallsDetailed(text, toolNames) {
     return result;
   }
   result.sawToolCallSyntax = looksLikeToolCallSyntax(trimmed);
+  if (shouldSkipToolCallParsingForCodeFenceExample(trimmed)) {
+    return result;
+  }
   const candidates = buildToolCallCandidates(trimmed);
   let parsed = [];
   for (const c of candidates) {
@@ -128,63 +140,17 @@ function emptyParseResult() {
 }
 
 function filterToolCallsDetailed(parsed, toolNames) {
-  const sourceNames = Array.isArray(toolNames) ? toolNames : [];
-  const allowed = new Set();
-  const allowedCanonical = new Map();
-  for (const item of sourceNames) {
-    const name = toStringSafe(item);
-    if (!name) {
-      continue;
-    }
-    allowed.add(name);
-    const lower = name.toLowerCase();
-    if (!allowedCanonical.has(lower)) {
-      allowedCanonical.set(lower, name);
-    }
-  }
-
-  if (allowed.size === 0) {
-    const rejected = [];
-    const seen = new Set();
-    for (const tc of parsed) {
-      if (!tc || !tc.name) {
-        continue;
-      }
-      if (seen.has(tc.name)) {
-        continue;
-      }
-      seen.add(tc.name);
-      rejected.push(tc.name);
-    }
-    return { calls: [], rejectedToolNames: rejected };
-  }
-
   const calls = [];
-  const rejected = [];
-  const seenRejected = new Set();
   for (const tc of parsed) {
     if (!tc || !tc.name) {
       continue;
     }
-    let matchedName = '';
-    if (allowed.has(tc.name)) {
-      matchedName = tc.name;
-    } else {
-      matchedName = resolveAllowedToolName(tc.name, allowed, allowedCanonical);
-    }
-    if (!matchedName) {
-      if (!seenRejected.has(tc.name)) {
-        seenRejected.add(tc.name);
-        rejected.push(tc.name);
-      }
-      continue;
-    }
     calls.push({
-      name: matchedName,
+      name: tc.name,
       input: tc.input && typeof tc.input === 'object' && !Array.isArray(tc.input) ? tc.input : {},
     });
   }
-  return { calls, rejectedToolNames: rejected };
+  return { calls, rejectedToolNames: [] };
 }
 
 function resolveAllowedToolName(name, allowed, allowedCanonical) {
@@ -220,11 +186,16 @@ function resolveAllowedToolName(name, allowed, allowedCanonical) {
 
 function looksLikeToolCallSyntax(text) {
   const lower = toStringSafe(text).toLowerCase();
-  return lower.includes('tool_calls')
-    || lower.includes('<tool_call')
-    || lower.includes('<function_call')
-    || lower.includes('<invoke')
-    || lower.includes('function.name:');
+  return TOOL_SEGMENT_KEYWORDS.some((kw) => lower.includes(kw))
+    || TOOL_MARKUP_PREFIXES.some((prefix) => lower.includes(prefix));
+}
+
+function shouldSkipToolCallParsingForCodeFenceExample(text) {
+  if (!looksLikeToolCallSyntax(text)) {
+    return false;
+  }
+  const stripped = stripFencedCodeBlocks(text);
+  return !looksLikeToolCallSyntax(stripped);
 }
 
 module.exports = {

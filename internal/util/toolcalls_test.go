@@ -19,11 +19,11 @@ func TestParseToolCalls(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsFromFencedJSON(t *testing.T) {
+func TestParseToolCallsIgnoresFencedJSON(t *testing.T) {
 	text := "I will call tools now\n```json\n{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"news\"}}]}\n```"
 	calls := ParseToolCalls(text, []string{"search"})
-	if len(calls) != 1 {
-		t.Fatalf("expected fenced tool_call payload to be parsed, got %#v", calls)
+	if len(calls) != 0 {
+		t.Fatalf("expected fenced tool_call payload to be ignored, got %#v", calls)
 	}
 }
 
@@ -41,50 +41,50 @@ func TestParseToolCallsWithFunctionArgumentsString(t *testing.T) {
 	}
 }
 
-func TestParseToolCallsRejectsUnknownToolName(t *testing.T) {
+func TestParseToolCallsKeepsUnknownToolName(t *testing.T) {
 	text := `{"tool_calls":[{"name":"unknown","input":{}}]}`
 	calls := ParseToolCalls(text, []string{"search"})
-	if len(calls) != 0 {
-		t.Fatalf("expected unknown tool to be rejected, got %#v", calls)
+	if len(calls) != 1 || calls[0].Name != "unknown" {
+		t.Fatalf("expected unknown tool to be preserved, got %#v", calls)
 	}
 }
 
-func TestParseToolCallsAllowsCaseInsensitiveToolNameAndCanonicalizes(t *testing.T) {
+func TestParseToolCallsKeepsOriginalToolNameCase(t *testing.T) {
 	text := `{"tool_calls":[{"name":"Bash","input":{"command":"ls -al"}}]}`
 	calls := ParseToolCalls(text, []string{"bash"})
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 }
 
-func TestParseToolCallsDetailedMarksPolicyRejection(t *testing.T) {
+func TestParseToolCallsDetailedDoesNotRejectByPolicy(t *testing.T) {
 	text := `{"tool_calls":[{"name":"unknown","input":{}}]}`
 	res := ParseToolCallsDetailed(text, []string{"search"})
 	if !res.SawToolCallSyntax {
 		t.Fatalf("expected SawToolCallSyntax=true, got %#v", res)
 	}
-	if !res.RejectedByPolicy {
-		t.Fatalf("expected RejectedByPolicy=true, got %#v", res)
+	if res.RejectedByPolicy {
+		t.Fatalf("expected RejectedByPolicy=false, got %#v", res)
 	}
-	if len(res.Calls) != 0 {
-		t.Fatalf("expected no calls after policy rejection, got %#v", res.Calls)
+	if len(res.Calls) != 1 || res.Calls[0].Name != "unknown" {
+		t.Fatalf("expected call to be preserved, got %#v", res.Calls)
 	}
 }
 
-func TestParseToolCallsDetailedRejectsWhenAllowListEmpty(t *testing.T) {
+func TestParseToolCallsDetailedAllowsWhenAllowListEmpty(t *testing.T) {
 	text := `{"tool_calls":[{"name":"search","input":{"q":"go"}}]}`
 	res := ParseToolCallsDetailed(text, nil)
 	if !res.SawToolCallSyntax {
 		t.Fatalf("expected SawToolCallSyntax=true, got %#v", res)
 	}
-	if !res.RejectedByPolicy {
-		t.Fatalf("expected RejectedByPolicy=true, got %#v", res)
+	if res.RejectedByPolicy {
+		t.Fatalf("expected RejectedByPolicy=false, got %#v", res)
 	}
-	if len(res.Calls) != 0 {
-		t.Fatalf("expected no calls when allow-list is empty, got %#v", res.Calls)
+	if len(res.Calls) != 1 || res.Calls[0].Name != "search" {
+		t.Fatalf("expected calls when allow-list is empty, got %#v", res.Calls)
 	}
 }
 
@@ -112,10 +112,17 @@ func TestParseStandaloneToolCallsSupportsMixedProsePayload(t *testing.T) {
 	}
 }
 
-func TestParseStandaloneToolCallsParsesFencedCodeBlock(t *testing.T) {
+func TestParseStandaloneToolCallsIgnoresFencedCodeBlock(t *testing.T) {
 	fenced := "```json\n{\"tool_calls\":[{\"name\":\"search\",\"input\":{\"q\":\"go\"}}]}\n```"
-	if calls := ParseStandaloneToolCalls(fenced, []string{"search"}); len(calls) != 1 {
-		t.Fatalf("expected fenced tool_call payload to be parsed, got %#v", calls)
+	if calls := ParseStandaloneToolCalls(fenced, []string{"search"}); len(calls) != 0 {
+		t.Fatalf("expected fenced tool_call payload to be ignored, got %#v", calls)
+	}
+}
+
+func TestParseStandaloneToolCallsIgnoresChatTranscriptEnvelope(t *testing.T) {
+	transcript := `[{"role":"user","content":"请展示完整会话"},{"role":"assistant","content":null,"tool_calls":[{"function":{"name":"search","arguments":"{\"q\":\"go\"}"}}]}]`
+	if calls := ParseStandaloneToolCalls(transcript, []string{"search"}); len(calls) != 0 {
+		t.Fatalf("expected transcript envelope not to trigger tool call parse, got %#v", calls)
 	}
 }
 
@@ -125,8 +132,8 @@ func TestParseToolCallsAllowsQualifiedToolName(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "search_web" {
-		t.Fatalf("expected canonical tool name search_web, got %q", calls[0].Name)
+	if calls[0].Name != "mcp.search_web" {
+		t.Fatalf("expected original tool name mcp.search_web, got %q", calls[0].Name)
 	}
 }
 
@@ -136,8 +143,8 @@ func TestParseToolCallsAllowsPunctuationVariantToolName(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "read_file" {
-		t.Fatalf("expected canonical tool name read_file, got %q", calls[0].Name)
+	if calls[0].Name != "read-file" {
+		t.Fatalf("expected original tool name read-file, got %q", calls[0].Name)
 	}
 }
 
@@ -147,8 +154,8 @@ func TestParseToolCallsSupportsClaudeXMLToolCall(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -172,8 +179,8 @@ func TestParseToolCallsSupportsClaudeXMLJSONToolCall(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -186,8 +193,8 @@ func TestParseToolCallsSupportsFunctionCallTagStyle(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "ls -la" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -200,8 +207,8 @@ func TestParseToolCallsSupportsAntmlFunctionCallStyle(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -214,8 +221,8 @@ func TestParseToolCallsSupportsAntmlArgumentStyle(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -228,11 +235,67 @@ func TestParseToolCallsSupportsInvokeFunctionCallStyle(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsToolUseFunctionParameterStyle(t *testing.T) {
+	text := `<tool_use><function name="search_web"><parameter name="query">test</parameter></function></tool_use>`
+	calls := ParseToolCalls(text, []string{"search_web"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "search_web" {
+		t.Fatalf("expected canonical tool name search_web, got %q", calls[0].Name)
+	}
+	if calls[0].Input["query"] != "test" {
+		t.Fatalf("expected query argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsToolUseNameParametersStyle(t *testing.T) {
+	text := `<tool_use><tool_name>write_file</tool_name><parameters>{"path":"/tmp/a.txt","content":"abc"}</parameters></tool_use>`
+	calls := ParseToolCalls(text, []string{"write_file"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "write_file" {
+		t.Fatalf("expected tool name write_file, got %q", calls[0].Name)
+	}
+	if calls[0].Input["path"] != "/tmp/a.txt" {
+		t.Fatalf("expected path argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsToolUseFunctionNameParametersStyle(t *testing.T) {
+	text := `<tool_use><function_name>write_file</function_name><parameters>{"path":"/tmp/b.txt","content":"xyz"}</parameters></tool_use>`
+	calls := ParseToolCalls(text, []string{"write_file"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "write_file" {
+		t.Fatalf("expected tool name write_file, got %q", calls[0].Name)
+	}
+	if calls[0].Input["content"] != "xyz" {
+		t.Fatalf("expected content argument, got %#v", calls[0].Input)
+	}
+}
+
+func TestParseToolCallsSupportsToolUseToolNameBodyStyle(t *testing.T) {
+	text := `<tool_use><tool_name>write_file</tool_name><path>/tmp/c.txt</path><content>hello</content></tool_use>`
+	calls := ParseToolCalls(text, []string{"write_file"})
+	if len(calls) != 1 {
+		t.Fatalf("expected 1 call, got %#v", calls)
+	}
+	if calls[0].Name != "write_file" {
+		t.Fatalf("expected tool name write_file, got %q", calls[0].Name)
+	}
+	if calls[0].Input["path"] != "/tmp/c.txt" {
+		t.Fatalf("expected path argument, got %#v", calls[0].Input)
 	}
 }
 
@@ -242,8 +305,8 @@ func TestParseToolCallsSupportsNestedToolTagStyle(t *testing.T) {
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -256,8 +319,8 @@ func TestParseToolCallsSupportsAntmlFunctionAttributeWithParametersTag(t *testin
 	if len(calls) != 1 {
 		t.Fatalf("expected 1 call, got %#v", calls)
 	}
-	if calls[0].Name != "bash" {
-		t.Fatalf("expected canonical tool name bash, got %q", calls[0].Name)
+	if calls[0].Name != "Bash" {
+		t.Fatalf("expected original tool name Bash, got %q", calls[0].Name)
 	}
 	if calls[0].Input["command"] != "pwd" {
 		t.Fatalf("expected command argument, got %#v", calls[0].Input)
@@ -270,8 +333,8 @@ func TestParseToolCallsSupportsMultipleAntmlFunctionCalls(t *testing.T) {
 	if len(calls) != 2 {
 		t.Fatalf("expected 2 calls, got %#v", calls)
 	}
-	if calls[0].Name != "bash" || calls[1].Name != "read" {
-		t.Fatalf("expected canonical names [bash read], got %#v", calls)
+	if calls[0].Name != "Bash" || calls[1].Name != "Read" {
+		t.Fatalf("expected original names [Bash Read], got %#v", calls)
 	}
 }
 

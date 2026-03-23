@@ -63,14 +63,3 @@ func appendTail(prev, next string, max int) string {
 	}
 	return combined[len(combined)-max:]
 }
-
-func looksLikeToolExampleContext(text string) bool {
-	return insideCodeFence(text)
-}
-
-func insideCodeFence(text string) bool {
-	if text == "" {
-		return false
-	}
-	return strings.Count(text, "```")%2 == 1
-}
