@@ -114,8 +114,14 @@ func flushToolSieve(state *toolStreamSieveState, toolNames []string) []toolStrea
 		} else {
 			content := state.capture.String()
 			if content != "" {
-				state.noteText(content)
-				events = append(events, toolStreamEvent{Content: content})
+				// If the captured text looks like an incomplete XML tool call block,
+				// swallow it to prevent leaking raw XML tags to the client.
+				if hasOpenXMLToolTag(content) {
+					// Drop it silently — incomplete tool call.
+				} else {
+					state.noteText(content)
+					events = append(events, toolStreamEvent{Content: content})
+				}
 			}
 		}
 		state.capture.Reset()
@@ -124,8 +130,14 @@ func flushToolSieve(state *toolStreamSieveState, toolNames []string) []toolStrea
 	}
 	if state.pending.Len() > 0 {
 		content := state.pending.String()
-		state.noteText(content)
-		events = append(events, toolStreamEvent{Content: content})
+		// Safety: if pending contains XML tool tag fragments (e.g. "tool_calls>"
+		// from a split closing tag), swallow them instead of leaking.
+		if hasOpenXMLToolTag(content) || looksLikeXMLToolTagFragment(content) {
+			// Drop it — likely an incomplete tool call fragment.
+		} else {
+			state.noteText(content)
+			events = append(events, toolStreamEvent{Content: content})
+		}
 		state.pending.Reset()
 	}
 	return events
@@ -159,6 +171,10 @@ func findSuspiciousPrefixStart(s string) int {
 			start = idx
 		}
 	}
+	// Also check for partial XML tool tag at end of string.
+	if xmlIdx := findPartialXMLToolTagStart(s); xmlIdx >= 0 && xmlIdx > start {
+		start = xmlIdx
+	}
 	return start
 }
 
@@ -175,12 +191,31 @@ func findToolSegmentStart(s string) int {
 			bestKeyIdx = idx
 		}
 	}
+	// Also detect XML tool call tags.
+	for _, tag := range xmlToolTagsToDetect {
+		idx := strings.Index(lower, tag)
+		if idx >= 0 && (bestKeyIdx < 0 || idx < bestKeyIdx) {
+			bestKeyIdx = idx
+		}
+	}
 	if bestKeyIdx < 0 {
 		return -1
+	}
+	// For XML tags, the '<' is itself the segment start.
+	if bestKeyIdx < len(s) && s[bestKeyIdx] == '<' {
+		if fenceStart, ok := openFenceStartBefore(s, bestKeyIdx); ok {
+			return fenceStart
+		}
+		return bestKeyIdx
 	}
 	start := strings.LastIndex(s[:bestKeyIdx], "{")
 	if start < 0 {
 		start = bestKeyIdx
+	}
+	// If the keyword matched inside an XML tag (e.g. "tool_calls" in "<tool_calls>"),
+	// back up past the '<' to capture the full tag.
+	if start > 0 && s[start-1] == '<' {
+		start--
 	}
 	if fenceStart, ok := openFenceStartBefore(s, start); ok {
 		return fenceStart
@@ -193,6 +228,16 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 	if captured == "" {
 		return "", nil, "", false
 	}
+
+	// Try XML tool call extraction first.
+	if xmlPrefix, xmlCalls, xmlSuffix, xmlReady := consumeXMLToolCapture(captured, toolNames); xmlReady {
+		return xmlPrefix, xmlCalls, xmlSuffix, true
+	}
+	// If XML tags are present but block is incomplete, keep buffering.
+	if hasOpenXMLToolTag(captured) {
+		return "", nil, "", false
+	}
+
 	lower := strings.ToLower(captured)
 	keyIdx := -1
 	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]", "[tool_result_history]"}
@@ -233,68 +278,4 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 	}
 	prefixPart, suffixPart = trimWrappingJSONFence(prefixPart, suffixPart)
 	return prefixPart, parsed.Calls, suffixPart, true
-}
-
-func extractToolHistoryBlock(captured string, keyIdx int) (start int, end int, ok bool) {
-	if keyIdx < 0 || keyIdx >= len(captured) {
-		return 0, 0, false
-	}
-	rest := strings.ToLower(captured[keyIdx:])
-	switch {
-	case strings.HasPrefix(rest, "[tool_call_history]"):
-		closeTag := "[/tool_call_history]"
-		closeIdx := strings.Index(rest, closeTag)
-		if closeIdx < 0 {
-			return 0, 0, false
-		}
-		return keyIdx, keyIdx + closeIdx + len(closeTag), true
-	case strings.HasPrefix(rest, "[tool_result_history]"):
-		closeTag := "[/tool_result_history]"
-		closeIdx := strings.Index(rest, closeTag)
-		if closeIdx < 0 {
-			return 0, 0, false
-		}
-		return keyIdx, keyIdx + closeIdx + len(closeTag), true
-	default:
-		return 0, 0, false
-	}
-}
-
-func trimWrappingJSONFence(prefix, suffix string) (string, string) {
-	trimmedPrefix := strings.TrimRight(prefix, " \t\r\n")
-	fenceIdx := strings.LastIndex(trimmedPrefix, "```")
-	if fenceIdx < 0 {
-		return prefix, suffix
-	}
-	// Only strip when the trailing fence in prefix behaves like an opening fence.
-	// A legitimate closing fence before a standalone tool JSON must be preserved.
-	if strings.Count(trimmedPrefix[:fenceIdx+3], "```")%2 == 0 {
-		return prefix, suffix
-	}
-	fenceHeader := strings.TrimSpace(trimmedPrefix[fenceIdx+3:])
-	if fenceHeader != "" && !strings.EqualFold(fenceHeader, "json") {
-		return prefix, suffix
-	}
-
-	trimmedSuffix := strings.TrimLeft(suffix, " \t\r\n")
-	if !strings.HasPrefix(trimmedSuffix, "```") {
-		return prefix, suffix
-	}
-	consumedLeading := len(suffix) - len(trimmedSuffix)
-	return trimmedPrefix[:fenceIdx], suffix[consumedLeading+3:]
-}
-
-func openFenceStartBefore(s string, pos int) (int, bool) {
-	if pos <= 0 || pos > len(s) {
-		return -1, false
-	}
-	segment := s[:pos]
-	lastFence := strings.LastIndex(segment, "```")
-	if lastFence < 0 {
-		return -1, false
-	}
-	if strings.Count(segment, "```")%2 == 1 {
-		return lastFence, true
-	}
-	return -1, false
 }

@@ -162,13 +162,16 @@ func TestMessagesPrepareMergesConsecutiveSameRole(t *testing.T) {
 		{"role": "user", "content": "World"},
 	}
 	got := MessagesPrepare(messages)
+	if !strings.HasPrefix(got, "<｜User｜>") {
+		t.Fatalf("expected user marker at the start, got %q", got)
+	}
 	if !strings.Contains(got, "Hello") || !strings.Contains(got, "World") {
 		t.Fatalf("expected both messages, got %q", got)
 	}
-	// Should be merged without <｜User｜> between them
+	// Should be merged into a single user turn with one marker at the start.
 	count := strings.Count(got, "<｜User｜>")
-	if count != 0 {
-		t.Fatalf("expected no User marker for first message pair, got %d occurrences", count)
+	if count != 1 {
+		t.Fatalf("expected one User marker for the merged pair, got %d occurrences", count)
 	}
 }
 

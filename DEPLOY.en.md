@@ -32,6 +32,7 @@ Config source (choose one):
 
 - **File**: `config.json` (recommended for local/Docker)
 - **Environment variable**: `DS2API_CONFIG_JSON` (recommended for Vercel; supports raw JSON or Base64)
+- Compatibility note: `CONFIG_JSON` is the legacy fallback variable; `DS2API_CONFIG_JSON` may also contain raw JSON directly
 
 Unified recommendation (best practice):
 
@@ -69,7 +70,7 @@ Default address: `http://0.0.0.0:5001` (override with `PORT`).
 
 ### 1.2 WebUI Build
 
-On first local startup, if `static/admin/` is missing, DS2API will automatically attempt to build the WebUI (requires Node.js/npm).
+On first local startup, if `static/admin/` is missing, DS2API will automatically attempt to build the WebUI (requires Node.js/npm; when dependencies are missing it runs `npm ci` first, then `npm run build -- --outDir static/admin --emptyOutDir`).
 
 Manual build:
 
@@ -122,6 +123,8 @@ docker-compose up -d
 # View logs
 docker-compose logs -f
 ```
+
+The default `docker-compose.yml` maps host port `6011` to container port `5001`. If you want `5001` exposed directly, adjust the `ports` mapping.
 
 ### 2.2 Update
 

@@ -1,6 +1,6 @@
 # DS2API 测试指南
 
-语言 / Language: [中文 + English](TESTING.md)
+语言 / Language: 中文 + English（同页）
 
 ## 概述 | Overview
 
@@ -14,6 +14,7 @@ DS2API 提供两个层级的测试：
 | 端到端测试 | `./tests/scripts/run-live.sh` | 使用真实账号执行全链路测试 |
 
 端到端测试集会录制完整的请求/响应日志，用于故障排查。
+Node 单元测试脚本会先做 `node --check` 语法门禁，再以 `--test-concurrency=1` 串行执行测试文件，减少模块级共享状态带来的干扰。
 
 ---
 
@@ -65,6 +66,8 @@ DS2API 提供两个层级的测试：
    - ✅ Search 模型
 
 4. **结果收集**：继续执行所有用例（不中断），写入最终汇总
+
+如果你只想跳过这些 preflight 检查，可以直接运行 `go run ./cmd/ds2api-tests --no-preflight`。
 
 ---
 

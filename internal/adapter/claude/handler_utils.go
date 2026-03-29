@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"ds2api/internal/util"
 )
 
 func normalizeClaudeMessages(messages []any) []any {
@@ -70,22 +72,27 @@ func normalizeClaudeMessages(messages []any) []any {
 }
 
 func buildClaudeToolPrompt(tools []any) string {
-	parts := []string{"You are Claude, a helpful AI assistant. You have access to these tools:"}
+	toolSchemas := make([]string, 0, len(tools))
+	names := make([]string, 0, len(tools))
 	for _, t := range tools {
 		m, ok := t.(map[string]any)
 		if !ok {
 			continue
 		}
 		name, desc, schemaObj := extractClaudeToolMeta(m)
+		if name == "" {
+			continue
+		}
+		names = append(names, name)
 		schema, _ := json.Marshal(schemaObj)
-		parts = append(parts, fmt.Sprintf("Tool: %s\nDescription: %s\nParameters: %s", name, desc, schema))
+		toolSchemas = append(toolSchemas, fmt.Sprintf("Tool: %s\nDescription: %s\nParameters: %s", name, desc, schema))
 	}
-	parts = append(parts,
-		"When you need a tool, respond with Claude-native tool use (tool_use) using the provided tool schema. Do not print tool-call JSON in text.",
-		"Tool roundtrip context is included directly in the conversation messages (assistant tool_use/tool_calls and tool results).",
-		"After receiving a valid tool result, continue with final answer instead of repeating the same call unless required fields are still missing.",
-	)
-	return strings.Join(parts, "\n\n")
+	if len(toolSchemas) == 0 {
+		return ""
+	}
+	return "You have access to these tools:\n\n" +
+		strings.Join(toolSchemas, "\n\n") + "\n\n" +
+		util.BuildToolCallInstructions(names)
 }
 
 func formatClaudeToolResultForPrompt(block map[string]any) string {

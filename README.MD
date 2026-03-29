@@ -16,6 +16,14 @@
 
 将 DeepSeek Web 对话能力转换为 OpenAI、Claude 与 Gemini 兼容 API。后端为 **Go 全量实现**，前端为 React WebUI 管理台（源码在 `webui/`，部署时自动构建到 `static/admin`）。
 
+> **重要免责声明**
+>
+> 本仓库仅供学习、研究、个人实验和内部验证使用，不提供任何形式的商业授权、适用性保证或结果保证。
+>
+> 作者及仓库维护者不对因使用、修改、分发、部署或依赖本项目而产生的任何直接或间接损失、账号封禁、数据丢失、法律风险或第三方索赔负责。
+>
+> 请勿将本项目用于违反服务条款、协议、法律法规或平台规则的场景。商业使用前请自行确认 `LICENSE`、相关协议以及你是否获得了作者的书面许可。
+
 ## 架构概览
 
 ```mermaid
@@ -68,7 +76,7 @@ flowchart LR
 | 并发队列控制 | 每账号 in-flight 上限 + 等待队列，动态计算建议并发值 |
 | DeepSeek PoW | WASM 计算（`wazero`），无需外部 Node.js 依赖 |
 | Tool Calling | 防泄漏处理：非代码块高置信特征识别、`delta.tool_calls` 早发、结构化增量输出 |
-| Admin API | 配置管理、运行时设置热更新、账号测试 / 批量测试、导入导出、Vercel 同步 |
+| Admin API | 配置管理、运行时设置热更新、账号测试 / 批量测试、会话清理、导入导出、Vercel 同步、版本检查 |
 | WebUI 管理台 | `/admin` 单页应用（中英文双语、深色模式） |
 | 运维探针 | `GET /healthz`（存活）、`GET /readyz`（就绪） |
 
@@ -132,6 +140,7 @@ cp config.example.json config.json
 后续部署建议：
 - 本地运行：直接读取 `config.json`
 - Docker / Vercel：由 `config.json` 生成 `DS2API_CONFIG_JSON`（Base64）注入环境变量
+- 兼容写法：`DS2API_CONFIG_JSON` 也可以直接写原始 JSON；`CONFIG_JSON` 是旧版回退变量
 
 ### 方式一：本地运行
 
@@ -152,7 +161,7 @@ go run ./cmd/ds2api
 
 默认监听地址：`http://localhost:5001`
 
-> **WebUI 自动构建**：本地首次启动时，若 `static/admin` 不存在，会自动尝试执行 `npm install && npm run build`（需要本机有 Node.js）。你也可以手动构建：`./scripts/build-webui.sh`
+> **WebUI 自动构建**：本地首次启动时，若 `static/admin` 不存在，会自动尝试执行 `npm ci`（仅在缺少依赖时）和 `npm run build -- --outDir static/admin --emptyOutDir`（需要本机有 Node.js）。你也可以手动构建：`./scripts/build-webui.sh`
 
 ### 方式二：Docker 运行
 
@@ -169,6 +178,8 @@ docker-compose up -d
 # 4. 查看日志
 docker-compose logs -f
 ```
+
+默认 `docker-compose.yml` 会把宿主机 `6011` 映射到容器内的 `5001`。如果你希望直接对外暴露 `5001`，请调整 `ports` 配置。
 
 更新镜像：`docker-compose up -d --build`
 
@@ -311,9 +322,13 @@ cp opencode.json.example opencode.json
 | `DS2API_JWT_EXPIRE_HOURS` | Admin JWT 过期小时数 | `24` |
 | `DS2API_CONFIG_PATH` | 配置文件路径 | `config.json` |
 | `DS2API_CONFIG_JSON` | 直接注入配置（JSON 或 Base64） | — |
+| `CONFIG_JSON` | 旧版兼容配置注入 | — |
 | `DS2API_WASM_PATH` | PoW WASM 文件路径 | 自动查找 |
 | `DS2API_STATIC_ADMIN_DIR` | 管理台静态文件目录 | `static/admin` |
 | `DS2API_AUTO_BUILD_WEBUI` | 启动时自动构建 WebUI | 本地开启，Vercel 关闭 |
+| `DS2API_DEV_PACKET_CAPTURE` | 本地开发抓包开关（记录最近会话请求/响应体） | 本地非 Vercel 默认开启 |
+| `DS2API_DEV_PACKET_CAPTURE_LIMIT` | 本地抓包保留条数（超出自动淘汰） | `5` |
+| `DS2API_DEV_PACKET_CAPTURE_MAX_BODY_BYTES` | 单条响应体最大记录字节数 | `2097152` |
 | `DS2API_ACCOUNT_MAX_INFLIGHT` | 每账号最大并发 in-flight 请求数 | `2` |
 | `DS2API_ACCOUNT_CONCURRENCY` | 同上（兼容旧名） | — |
 | `DS2API_ACCOUNT_MAX_QUEUE` | 等待队列上限 | `recommended_concurrency` |
@@ -340,6 +355,7 @@ cp opencode.json.example opencode.json
 | **直通 token 模式** | 传入 token 不在 `config.keys` 中时，直接作为 DeepSeek token 使用 |
 
 可选请求头 `X-Ds2-Target-Account`：指定使用某个托管账号（值为 email 或 mobile）。
+Gemini 路由还可以使用 `x-goog-api-key`，或在没有认证头时使用 `?key=` / `?api_key=` 作为调用方凭据。
 
 ## 并发模型
 
@@ -356,13 +372,17 @@ cp opencode.json.example opencode.json
 
 ## Tool Call 适配
 
-当请求中带 `tools` 时，DS2API 会做防泄漏处理：
+当请求中带 `tools` 时，DS2API 会做防泄漏处理与结构化转译：
 
-1. 只在**非代码块上下文**启用 toolcall 特征识别（代码块示例不会触发）
-2. `responses` 流式严格使用官方 item 生命周期事件（`response.output_item.*`、`response.content_part.*`、`response.function_call_arguments.*`）
-3. 未在 `tools` 声明中的工具名会被严格拒绝，不会下发为有效 tool call
+1. 只在**非代码块上下文**启用执行型 toolcall 识别（代码块示例默认不触发）
+2. 解析层以 XML/Markup 为最高优先级，同时兼容 JSON / ANTML / invoke / text-kv，并统一归一到内部工具调用结构
+3. `responses` 流式严格使用官方 item 生命周期事件（`response.output_item.*`、`response.content_part.*`、`response.function_call_arguments.*`）
 4. `responses` 支持并执行 `tool_choice`（`auto`/`none`/`required`/强制函数）；`required` 违规时非流式返回 `422`，流式返回 `response.failed`
-5. 仅在通过策略校验后才会发出有效工具调用事件，避免错误工具名进入客户端执行链
+5. 客户端请求哪种协议，就按该协议返回工具调用（OpenAI/Claude/Gemini 各自原生结构）；模型侧优先约束输出规范 XML，再由兼容层转译
+
+> 说明：当前版本在 parser 层仍以“尽量解析成功”为优先，未启用基于 allow-list 的工具名硬拒绝。
+>
+> 想评估“把工具调用封装成 XML 再输入模型”的方案，可参考：`docs/toolcall-semantics.md`。
 
 ## 本地开发抓包工具
 
@@ -507,5 +527,7 @@ go test -v -run 'TestParseToolCalls|TestRepair' ./internal/util/
 
 ## 免责声明
 
-本项目基于逆向方式实现，仅供学习与研究使用。稳定性和可用性不作保证，请勿用于违反服务条款或法律法规的场景。
-20260218xu
+本项目基于逆向方式实现，仅供学习、研究、个人实验和内部验证使用，不提供任何商业授权、稳定性保证或可用性保证。
+作者及仓库维护者不对因使用、修改、分发、部署或依赖本项目而产生的任何直接或间接损失、账号封禁、数据丢失、法律风险或第三方索赔负责。
+
+请勿将本项目用于违反服务条款、协议、法律法规或平台规则的场景。商业使用前请自行确认 `LICENSE`、相关协议以及你是否获得了作者的书面许可。

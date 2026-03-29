@@ -12,7 +12,7 @@ func TestMessagesPrepareBasic(t *testing.T) {
 	if got == "" {
 		t.Fatal("expected non-empty prompt")
 	}
-	if got != "Hello" {
+	if got != "<｜User｜>Hello" {
 		t.Fatalf("unexpected prompt: %q", got)
 	}
 }
@@ -55,7 +55,7 @@ func TestMessagesPrepareArrayTextVariants(t *testing.T) {
 		},
 	}
 	got := MessagesPrepare(messages)
-	if got != "line1\nline2" {
+	if got != "<｜User｜>line1\nline2" {
 		t.Fatalf("unexpected content from text variants: %q", got)
 	}
 }

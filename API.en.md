@@ -46,6 +46,7 @@ Use it per deployment mode:
 
 - Local run: read `config.json` directly
 - Docker / Vercel: generate Base64 from `config.json`, then set `DS2API_CONFIG_JSON`
+- Compatibility note: `DS2API_CONFIG_JSON` may also contain raw JSON directly; `CONFIG_JSON` is the legacy fallback variable
 
 ```bash
 DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
@@ -65,6 +66,7 @@ Two header formats accepted:
 | --- | --- |
 | Bearer Token | `Authorization: Bearer <token>` |
 | API Key Header | `x-api-key: <token>` (no `Bearer` prefix) |
+| Gemini-compatible | `x-goog-api-key: <token>` or `?key=<token>` / `?api_key=<token>` |
 
 **Auth behavior**:
 
@@ -72,6 +74,7 @@ Two header formats accepted:
 - Token is not in `config.keys` → **Direct token mode**: treated as a DeepSeek token directly
 
 **Optional header**: `X-Ds2-Target-Account: <email_or_mobile>` — Pin a specific managed account.
+Gemini-compatible clients can also send `x-goog-api-key`, `?key=`, or `?api_key=` as the caller credential source.
 
 ### Admin Endpoints (`/admin/*`)
 
@@ -124,13 +127,16 @@ Two header formats accepted:
 | GET | `/admin/queue/status` | Admin | Account queue status |
 | POST | `/admin/accounts/test` | Admin | Test one account |
 | POST | `/admin/accounts/test-all` | Admin | Test all accounts |
+| POST | `/admin/accounts/sessions/delete-all` | Admin | Delete all sessions for one account |
 | POST | `/admin/import` | Admin | Batch import keys/accounts |
 | POST | `/admin/test` | Admin | Test API through service |
 | POST | `/admin/vercel/sync` | Admin | Sync config to Vercel |
 | GET | `/admin/vercel/status` | Admin | Vercel sync status |
+| POST | `/admin/vercel/status` | Admin | Vercel sync status / draft compare |
 | GET | `/admin/export` | Admin | Export config JSON/Base64 |
 | GET | `/admin/dev/captures` | Admin | Read local packet-capture entries |
 | DELETE | `/admin/dev/captures` | Admin | Clear local packet-capture entries |
+| GET | `/admin/version` | Admin | Check current version and latest Release |
 
 ---
 
@@ -580,6 +586,7 @@ Returns sanitized config.
 ```json
 {
   "keys": ["k1", "k2"],
+  "env_backed": false,
   "accounts": [
     {
       "identifier": "user@example.com",
@@ -599,7 +606,7 @@ Returns sanitized config.
 
 ### `POST /admin/config`
 
-Updatable fields: `keys`, `accounts`, `claude_mapping`.
+Only updates `keys`, `accounts`, and `claude_mapping`.
 
 **Request**:
 
@@ -620,7 +627,8 @@ Updatable fields: `keys`, `accounts`, `claude_mapping`.
 
 Reads runtime settings and status, including:
 
-- `admin` (JWT expiry, default-password warning, etc.)
+- `success`
+- `admin` (`has_password_hash`, `jwt_expire_hours`, `jwt_valid_after_unix`, `default_password_warning`)
 - `runtime` (`account_max_inflight`, `account_max_queue`, `global_max_inflight`)
 - `toolcall` / `responses` / `embeddings`
 - `auto_delete` (`sessions`)
@@ -650,6 +658,8 @@ Request example:
 {"new_password":"your-new-password"}
 ```
 
+It also accepts `{"password":"your-new-password"}`.
+
 ### `POST /admin/config/import`
 
 Imports full config with:
@@ -658,6 +668,8 @@ Imports full config with:
 - `mode=replace`
 
 The request can send config directly, or wrapped as `{"config": {...}, "mode":"merge"}`.
+Query params `?mode=merge` / `?mode=replace` are also supported.
+Import accepts `keys`, `accounts`, `claude_mapping` / `claude_model_mapping`, `model_aliases`, `admin`, `runtime`, `toolcall`, `responses`, `embeddings`, and `auto_delete`.
 
 ### `GET /admin/config/export`
 
@@ -683,6 +695,7 @@ Exports full config in three forms: `config`, `json`, and `base64`.
 | --- | --- | --- |
 | `page` | `1` | ≥ 1 |
 | `page_size` | `10` | 1–100 |
+| `q` | empty | Filter by identifier / email / mobile |
 
 **Response**:
 
@@ -695,7 +708,8 @@ Exports full config in three forms: `config`, `json`, and `base64`.
       "mobile": "",
       "has_password": true,
       "has_token": true,
-      "token_preview": "abc..."
+      "token_preview": "abc...",
+      "test_status": "ok"
     }
   ],
   "total": 25,
@@ -704,6 +718,8 @@ Exports full config in three forms: `config`, `json`, and `base64`.
   "total_pages": 3
 }
 ```
+
+Returned items also include `test_status`, usually `ok` or `failed`.
 
 ### `POST /admin/accounts`
 
@@ -757,9 +773,13 @@ Exports full config in three forms: `config`, `json`, and `base64`.
   "success": true,
   "response_time": 1240,
   "message": "API test successful (session creation only)",
-  "model": "deepseek-chat"
+  "model": "deepseek-chat",
+  "session_count": 0,
+  "config_writable": true
 }
 ```
+
+If a `message` is provided, `thinking` may also be included when the upstream response carries reasoning text.
 
 ### `POST /admin/accounts/test-all`
 
@@ -773,6 +793,25 @@ Optional request field: `model`.
   "results": [...]
 }
 ```
+
+The internal concurrency limit is currently fixed at 5.
+
+### `POST /admin/accounts/sessions/delete-all`
+
+Deletes all DeepSeek sessions for a specific account. Request example:
+
+```json
+{"identifier":"user@example.com"}
+```
+
+Response:
+
+```json
+{"success": true, "message": "删除成功"}
+```
+
+If the account is missing or deletion fails, `success` becomes `false` and `message` contains the error.
+The current handler returns the Chinese literal `删除成功` on success.
 
 ### `POST /admin/import`
 
@@ -851,15 +890,24 @@ Or manual deploy required:
 }
 ```
 
+Failed account checks are returned in `failed_accounts`, and any saved Vercel credentials are returned in `saved_credentials`.
+
 ### `GET /admin/vercel/status`
 
 ```json
 {
   "synced": true,
   "last_sync_time": 1738400000,
-  "has_synced_before": true
+  "has_synced_before": true,
+  "env_backed": false,
+  "config_hash": "....",
+  "last_synced_hash": "....",
+  "draft_hash": "....",
+  "draft_differs": false
 }
 ```
+
+`POST /admin/vercel/status` can also accept `config_override` to compare a draft config against the current synced config.
 
 ### `GET /admin/export`
 
@@ -869,6 +917,29 @@ Or manual deploy required:
   "base64": "ey4uLn0="
 }
 ```
+
+This is the same payload as `GET /admin/config/export`, just with a shorter path.
+
+### `GET /admin/version`
+
+Checks the current build version and the latest GitHub Release:
+
+```json
+{
+  "success": true,
+  "current_version": "2.3.5",
+  "current_tag": "v2.3.5",
+  "source": "file:VERSION",
+  "checked_at": "2026-03-29T00:00:00Z",
+  "latest_tag": "v2.3.6",
+  "latest_version": "2.3.6",
+  "release_url": "https://github.com/CJackHwang/ds2api/releases/tag/v2.3.6",
+  "published_at": "2026-03-28T12:00:00Z",
+  "has_update": true
+}
+```
+
+If GitHub API access fails, the response includes `check_error` while still returning HTTP 200.
 
 ### `GET /admin/dev/captures`
 

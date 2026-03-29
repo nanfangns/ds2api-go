@@ -213,6 +213,22 @@ test('sieve flushes incomplete captured tool json as text on stream finalize', (
   assert.equal(leakedText.includes('{'), true);
 });
 
+test('sieve flushes incomplete captured XML tool blocks without leaking raw tags', () => {
+  const events = runSieve(
+    [
+      '前置正文G。',
+      '<tool_calls>\n',
+      '  <tool_call>\n',
+      '    <tool_name>read_file</tool_name>\n',
+    ],
+    ['read_file'],
+  );
+  const leakedText = collectText(events);
+  assert.equal(leakedText.includes('前置正文G。'), true);
+  assert.equal(leakedText.toLowerCase().includes('tool_calls'), false);
+  assert.equal(leakedText.includes('<tool_call'), false);
+});
+
 test('sieve still intercepts large tool json payloads over previous capture limit', () => {
   const large = 'a'.repeat(9000);
   const payload = `{"tool_calls":[{"name":"read_file","input":{"path":"${large}"}}]}`;

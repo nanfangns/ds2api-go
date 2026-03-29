@@ -2,7 +2,6 @@ package openai
 
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 
 	"ds2api/internal/prompt"
@@ -56,45 +55,13 @@ func normalizeOpenAIMessagesForPrompt(raw []any, traceID string) []map[string]an
 }
 
 func buildAssistantContentForPrompt(msg map[string]any) string {
-	content := normalizeOpenAIContentForPrompt(msg["content"])
-	toolCalls := normalizeAssistantToolCallsForPrompt(msg["tool_calls"])
-	if toolCalls == "" {
-		return strings.TrimSpace(content)
-	}
-	if strings.TrimSpace(content) == "" {
-		return toolCalls
-	}
-	return strings.TrimSpace(content + "\n" + toolCalls)
-}
-
-func normalizeAssistantToolCallsForPrompt(v any) string {
-	calls, ok := v.([]any)
-	if !ok || len(calls) == 0 {
-		return ""
-	}
-	b, err := json.Marshal(calls)
-	if err != nil {
-		return strings.TrimSpace(fmt.Sprintf("%v", calls))
-	}
-	return strings.TrimSpace(string(b))
+	return strings.TrimSpace(normalizeOpenAIContentForPrompt(msg["content"]))
 }
 
 func buildToolContentForPrompt(msg map[string]any) string {
-	payload := map[string]any{
-		"content": msg["content"],
-	}
-	if id := strings.TrimSpace(asString(msg["tool_call_id"])); id != "" {
-		payload["tool_call_id"] = id
-	}
-	if id := strings.TrimSpace(asString(msg["id"])); id != "" {
-		payload["id"] = id
-	}
-	if name := strings.TrimSpace(asString(msg["name"])); name != "" {
-		payload["name"] = name
-	}
-	content := normalizeOpenAIContentForPrompt(payload)
+	content := normalizeOpenAIContentForPrompt(msg["content"])
 	if strings.TrimSpace(content) == "" {
-		return `{"content":"null"}`
+		return "null"
 	}
 	return content
 }

@@ -32,6 +32,7 @@
 
 - **文件方式**：`config.json`（推荐本地/Docker 使用）
 - **环境变量方式**：`DS2API_CONFIG_JSON`（推荐 Vercel 使用，支持 JSON 字符串或 Base64 编码）
+- 兼容写法：`CONFIG_JSON` 是旧版回退变量；`DS2API_CONFIG_JSON` 也可以直接写原始 JSON
 
 统一建议（最优实践）：
 
@@ -69,7 +70,7 @@ go run ./cmd/ds2api
 
 ### 1.2 WebUI 构建
 
-本地首次启动时，若 `static/admin/` 不存在，服务会自动尝试构建 WebUI（需要 Node.js/npm）。
+本地首次启动时，若 `static/admin/` 不存在，服务会自动尝试构建 WebUI（需要 Node.js/npm；缺依赖时会先执行 `npm ci`，再执行 `npm run build -- --outDir static/admin --emptyOutDir`）。
 
 你也可以手动构建：
 
@@ -122,6 +123,8 @@ docker-compose up -d
 # 查看日志
 docker-compose logs -f
 ```
+
+默认 `docker-compose.yml` 会把宿主机 `6011` 映射到容器内的 `5001`。如果你希望直接对外暴露 `5001`，请调整 `ports` 配置。
 
 ### 2.2 更新
 

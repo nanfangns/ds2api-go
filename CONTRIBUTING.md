@@ -70,6 +70,7 @@ docker-compose -f docker-compose.dev.yml up
 5. 发起 Pull Request
 
 > 💡 如果修改了 `webui/` 目录下的文件，无需手动构建——CI 会自动处理。
+> 但如果你本地想验证 `static/admin/` 产物，还是可以手动运行 `./scripts/build-webui.sh`。
 
 ## WebUI 构建
 
@@ -129,6 +130,8 @@ ds2api/
 │       ├── components/      # 通用组件
 │       └── locales/         # 语言包
 ├── scripts/                 # 构建与测试脚本
+├── tests/                   # 单元测试、Node 测试与端到端测试
+├── plans/                   # 计划、门禁和手工烟测记录
 ├── static/admin/            # WebUI 构建产物（不提交）
 ├── Dockerfile               # 多阶段构建
 ├── docker-compose.yml       # 生产环境

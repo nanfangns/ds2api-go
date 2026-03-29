@@ -34,11 +34,11 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsAndToolResult(t *tes
 	}
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 4 {
-		t.Fatalf("expected 4 normalized messages with assistant tool_call history preserved, got %d", len(normalized))
+	if len(normalized) != 3 {
+		t.Fatalf("expected 3 normalized messages with tool-call-only assistant turn omitted, got %d", len(normalized))
 	}
-	toolContent, _ := normalized[3]["content"].(string)
-	if !strings.Contains(toolContent, `\"temp\":18`) {
+	toolContent, _ := normalized[2]["content"].(string)
+	if !strings.Contains(toolContent, `"temp":18`) {
 		t.Fatalf("tool result should be transparently forwarded, got %q", toolContent)
 	}
 	if strings.Contains(toolContent, "[TOOL_RESULT_HISTORY]") {
@@ -87,8 +87,8 @@ func TestNormalizeOpenAIMessagesForPrompt_ToolArrayBlocksJoined(t *testing.T) {
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
 	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, `"line-1"`) || !strings.Contains(got, `"line-2"`) || !strings.Contains(got, `"name":"read_file"`) {
-		t.Fatalf("expected tool envelope to preserve content blocks and metadata, got %q", got)
+	if !strings.Contains(got, `line-1`) || !strings.Contains(got, `line-2`) {
+		t.Fatalf("expected tool content blocks preserved, got %q", got)
 	}
 }
 
@@ -112,7 +112,7 @@ func TestNormalizeOpenAIMessagesForPrompt_FunctionRoleCompatible(t *testing.T) {
 		t.Fatalf("expected function role normalized as tool, got %#v", normalized[0]["role"])
 	}
 	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, `"name":"legacy_tool"`) || !strings.Contains(got, `"ok":true`) {
+	if !strings.Contains(got, `"ok":true`) || strings.Contains(got, `"name":"legacy_tool"`) {
 		t.Fatalf("unexpected normalized function-role content: %q", got)
 	}
 }
@@ -139,8 +139,8 @@ func TestNormalizeOpenAIMessagesForPrompt_EmptyToolContentPreservedAsNull(t *tes
 		t.Fatalf("expected tool role preserved, got %#v", normalized[0]["role"])
 	}
 	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, `"content":""`) || !strings.Contains(got, `"name":"noop_tool"`) || !strings.Contains(got, `"tool_call_id":"call_5"`) {
-		t.Fatalf("expected tool metadata preserved in content envelope, got %q", got)
+	if got != "null" {
+		t.Fatalf("expected empty tool content normalized as null string, got %q", got)
 	}
 }
 
@@ -170,12 +170,8 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantMultipleToolCallsRemainSepara
 	}
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected assistant tool_call-only message to be preserved, got %#v", normalized)
-	}
-	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, `"name":"search_web"`) || !strings.Contains(got, `"name":"eval_javascript"`) {
-		t.Fatalf("expected tool_calls payload preserved in assistant content, got %q", got)
+	if len(normalized) != 0 {
+		t.Fatalf("expected assistant tool_call-only message omitted, got %#v", normalized)
 	}
 }
 
@@ -196,12 +192,8 @@ func TestNormalizeOpenAIMessagesForPrompt_PreservesConcatenatedToolArguments(t *
 	}
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected assistant tool_call-only content to be preserved, got %#v", normalized)
-	}
-	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, `{}{\"query\":\"测试工具调用\"}`) {
-		t.Fatalf("expected concatenated arguments preserved verbatim, got %q", got)
+	if len(normalized) != 0 {
+		t.Fatalf("expected assistant tool_call-only content omitted, got %#v", normalized)
 	}
 }
 
@@ -222,12 +214,8 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantToolCallsMissingNameAreDroppe
 	}
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected assistant tool_calls history to be preserved even when name missing, got %#v", normalized)
-	}
-	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, "call_missing_name") {
-		t.Fatalf("expected raw tool_call payload preserved, got %q", got)
+	if len(normalized) != 0 {
+		t.Fatalf("expected assistant tool_calls without text omitted, got %#v", normalized)
 	}
 }
 
@@ -249,12 +237,8 @@ func TestNormalizeOpenAIMessagesForPrompt_AssistantNilContentDoesNotInjectNullLi
 	}
 
 	normalized := normalizeOpenAIMessagesForPrompt(raw, "")
-	if len(normalized) != 1 {
-		t.Fatalf("expected nil-content assistant tool_call-only message to be preserved, got %#v", normalized)
-	}
-	got, _ := normalized[0]["content"].(string)
-	if !strings.Contains(got, "send_file_to_user") {
-		t.Fatalf("expected tool call payload preserved, got %q", got)
+	if len(normalized) != 0 {
+		t.Fatalf("expected nil-content assistant tool_call-only message omitted, got %#v", normalized)
 	}
 }
 

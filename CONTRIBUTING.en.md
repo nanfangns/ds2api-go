@@ -70,6 +70,7 @@ docker-compose -f docker-compose.dev.yml up
 5. Open a Pull Request
 
 > 💡 If you modify files under `webui/`, no manual build is needed — CI handles it automatically.
+> If you want to verify the generated `static/admin/` assets locally, you can still run `./scripts/build-webui.sh`.
 
 ## Build WebUI
 
@@ -129,6 +130,8 @@ ds2api/
 │       ├── components/      # Shared components
 │       └── locales/         # Language packs
 ├── scripts/                 # Build and test scripts
+├── tests/                   # Unit tests, Node tests, and end-to-end tests
+├── plans/                   # Plans, gates, and manual smoke-test records
 ├── static/admin/            # WebUI build output (not committed)
 ├── Dockerfile               # Multi-stage build
 ├── docker-compose.yml       # Production

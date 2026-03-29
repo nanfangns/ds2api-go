@@ -248,14 +248,14 @@ func TestBuildClaudeToolPromptSingleTool(t *testing.T) {
 	if !containsStr(prompt, "Search the web") {
 		t.Fatalf("expected description in prompt")
 	}
-	if !containsStr(prompt, "tool_use") {
-		t.Fatalf("expected tool_use instruction in prompt")
+	if !containsStr(prompt, "<tool_calls>") {
+		t.Fatalf("expected XML tool_calls format in prompt")
 	}
 	if containsStr(prompt, "TOOL_CALL_HISTORY") || containsStr(prompt, "TOOL_RESULT_HISTORY") {
 		t.Fatalf("expected legacy tool history markers removed from prompt")
 	}
-	if !containsStr(prompt, "Do not print tool-call JSON in text") {
-		t.Fatalf("expected prompt to keep no tool-call-json instruction")
+	if !containsStr(prompt, "TOOL CALL FORMAT") {
+		t.Fatalf("expected tool call format header in prompt")
 	}
 }
 
@@ -301,12 +301,9 @@ func TestBuildClaudeToolPromptSupportsOpenAIStyleFunctionTool(t *testing.T) {
 func TestBuildClaudeToolPromptSkipsNonMap(t *testing.T) {
 	tools := []any{"not a map"}
 	prompt := buildClaudeToolPrompt(tools)
-	if prompt == "" {
-		t.Fatal("expected non-empty prompt even with invalid tools")
-	}
-	// Should still contain the intro and instruction
-	if !containsStr(prompt, "You are Claude") {
-		t.Fatalf("expected intro in prompt")
+	// No valid tools → empty prompt
+	if prompt != "" {
+		t.Fatalf("expected empty prompt for non-map tools, got: %q", prompt)
 	}
 }
 

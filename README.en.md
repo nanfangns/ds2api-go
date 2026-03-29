@@ -16,6 +16,14 @@ Language: [中文](README.MD) | [English](README.en.md)
 
 DS2API converts DeepSeek Web chat capability into OpenAI-compatible, Claude-compatible, and Gemini-compatible APIs. The backend is a **pure Go implementation**, with a React WebUI admin panel (source in `webui/`, build output auto-generated to `static/admin` during deployment).
 
+> **Important Disclaimer**
+>
+> This repository is provided for learning, research, personal experimentation, and internal validation only. It does not grant any commercial authorization and comes with no warranty of fitness, stability, or results.
+>
+> The author and repository maintainers are not responsible for any direct or indirect loss, account suspension, data loss, legal risk, or third-party claims arising from use, modification, distribution, deployment, or reliance on this project.
+>
+> Do not use this project in ways that violate service terms, agreements, laws, or platform rules. Before any commercial use, review the `LICENSE`, the relevant terms, and confirm that you have the author's written permission.
+
 ## Architecture Overview
 
 ```mermaid
@@ -68,7 +76,7 @@ flowchart LR
 | Concurrency control | Per-account in-flight limit + waiting queue, dynamic recommended concurrency |
 | DeepSeek PoW | WASM solving via `wazero`, no external Node.js dependency |
 | Tool Calling | Anti-leak handling: non-code-block feature match, early `delta.tool_calls`, structured incremental output |
-| Admin API | Config management, runtime settings hot-reload, account testing/batch test, import/export, Vercel sync |
+| Admin API | Config management, runtime settings hot-reload, account testing/batch test, session cleanup, import/export, Vercel sync, version check |
 | WebUI Admin Panel | SPA at `/admin` (bilingual Chinese/English, dark mode) |
 | Health Probes | `GET /healthz` (liveness), `GET /readyz` (readiness) |
 
@@ -132,6 +140,7 @@ cp config.example.json config.json
 Recommended per deployment mode:
 - Local run: read `config.json` directly
 - Docker / Vercel: generate Base64 from `config.json` and inject as `DS2API_CONFIG_JSON`
+- Compatibility note: `DS2API_CONFIG_JSON` may also contain raw JSON directly; `CONFIG_JSON` is the legacy fallback variable
 
 ### Option 1: Local Run
 
@@ -152,7 +161,7 @@ go run ./cmd/ds2api
 
 Default URL: `http://localhost:5001`
 
-> **WebUI auto-build**: On first local startup, if `static/admin` is missing, DS2API will auto-run `npm install && npm run build` (requires Node.js). You can also build manually: `./scripts/build-webui.sh`
+> **WebUI auto-build**: On first local startup, if `static/admin` is missing, DS2API will auto-run `npm ci` (only when dependencies are missing) and `npm run build -- --outDir static/admin --emptyOutDir` (requires Node.js). You can also build manually: `./scripts/build-webui.sh`
 
 ### Option 2: Docker
 
@@ -169,6 +178,8 @@ docker-compose up -d
 # 4. View logs
 docker-compose logs -f
 ```
+
+The default `docker-compose.yml` maps host port `6011` to container port `5001`. If you want `5001` exposed directly, adjust the `ports` mapping.
 
 Rebuild after updates: `docker-compose up -d --build`
 
@@ -311,6 +322,7 @@ cp opencode.json.example opencode.json
 | `DS2API_JWT_EXPIRE_HOURS` | Admin JWT TTL in hours | `24` |
 | `DS2API_CONFIG_PATH` | Config file path | `config.json` |
 | `DS2API_CONFIG_JSON` | Inline config (JSON or Base64) | — |
+| `CONFIG_JSON` | Legacy compatibility config input | — |
 | `DS2API_WASM_PATH` | PoW WASM file path | Auto-detect |
 | `DS2API_STATIC_ADMIN_DIR` | Admin static assets dir | `static/admin` |
 | `DS2API_AUTO_BUILD_WEBUI` | Auto-build WebUI on startup | Enabled locally, disabled on Vercel |
@@ -340,6 +352,7 @@ For business endpoints (`/v1/*`, `/anthropic/*`, Gemini routes), DS2API supports
 | **Direct token** | If the token is not in `config.keys`, DS2API treats it as a DeepSeek token directly |
 
 Optional header `X-Ds2-Target-Account`: Pin a specific managed account (value is email or mobile).
+Gemini routes also accept `x-goog-api-key`, or `?key=` / `?api_key=` when no auth header is present.
 
 ## Concurrency Model
 
@@ -491,4 +504,7 @@ Workflow: `.github/workflows/release-artifacts.yml`
 
 ## Disclaimer
 
-This project is built through reverse engineering and is provided for learning and research only. Stability is not guaranteed. Do not use it in scenarios that violate terms of service or laws.
+This project is built through reverse engineering and is provided for learning, research, personal experimentation, and internal validation only. No commercial authorization is granted, and no warranty of stability, fitness, or results is provided.
+The author and repository maintainers are not responsible for any direct or indirect loss, account suspension, data loss, legal risk, or third-party claims arising from use, modification, distribution, deployment, or reliance on this project.
+
+Do not use this project in ways that violate service terms, agreements, laws, or platform rules. Before any commercial use, review the `LICENSE`, the relevant terms, and confirm that you have the author's written permission.

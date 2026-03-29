@@ -53,7 +53,7 @@ func injectToolPrompt(messages []map[string]any, tools []any, policy util.ToolCh
 	if len(toolSchemas) == 0 {
 		return messages, names
 	}
-	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\nWhen you need to use tools, output ONLY this JSON object format:\n{\"tool_calls\": [{\"name\": \"tool_name\", \"input\": {\"param\": \"value\"}}]}\n\n【EXAMPLE】\nUser: Please check the weather in Beijing and Shanghai, and update my todo list.\nAssistant:\n{\"tool_calls\": [\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Beijing\"}},\n  {\"name\": \"get_weather\", \"input\": {\"city\": \"Shanghai\"}},\n  {\"name\": \"update_todo\", \"input\": {\"todos\": [{\"content\": \"Buy milk\"}, {\"content\": \"Write report\"}]}}\n]}\n\nIMPORTANT:\n1) If calling tools, output ONLY the JSON object above. Do NOT include any extra text.\n2) Do NOT wrap tool-call JSON in markdown/code fences (for example, do not use triple backticks).\n3) After receiving a tool result, you MUST use it to produce the final answer.\n4) Only call another tool when the previous result is missing required data or returned an error.\n5) JSON SYNTAX STRICTLY REQUIRED: All property names MUST be enclosed in double quotes (e.g., \"name\", not name).\n6) ARRAY FORMAT: If providing a list of items, you MUST enclose them in square brackets `[]` (e.g., \"todos\": [{\"item\": \"a\"}, {\"item\": \"b\"}]). DO NOT output comma-separated objects without brackets."
+	toolPrompt := "You have access to these tools:\n\n" + strings.Join(toolSchemas, "\n\n") + "\n\n" + buildToolCallInstructions(names)
 	if policy.Mode == util.ToolChoiceRequired {
 		toolPrompt += "\n7) For this response, you MUST call at least one tool from the allowed list."
 	}
@@ -71,6 +71,11 @@ func injectToolPrompt(messages []map[string]any, tools []any, policy util.ToolCh
 	}
 	messages = append([]map[string]any{{"role": "system", "content": toolPrompt}}, messages...)
 	return messages, names
+}
+
+// buildToolCallInstructions delegates to the shared util implementation.
+func buildToolCallInstructions(toolNames []string) string {
+	return util.BuildToolCallInstructions(toolNames)
 }
 
 func formatIncrementalStreamToolCallDeltas(deltas []toolCallDelta, ids map[int]string) []map[string]any {
