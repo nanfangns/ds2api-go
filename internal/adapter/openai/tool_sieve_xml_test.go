@@ -78,6 +78,49 @@ func TestProcessToolSieveXMLWithLeadingText(t *testing.T) {
 	}
 }
 
+func TestProcessToolSievePassesThroughNonToolXMLBlock(t *testing.T) {
+	var state toolStreamSieveState
+	chunk := `<tool_call><title>示例 XML</title><body>plain text xml payload</body></tool_call>`
+	events := processToolSieveChunk(&state, chunk, []string{"read_file"})
+	events = append(events, flushToolSieve(&state, []string{"read_file"})...)
+
+	var textContent strings.Builder
+	toolCalls := 0
+	for _, evt := range events {
+		textContent.WriteString(evt.Content)
+		toolCalls += len(evt.ToolCalls)
+	}
+	if toolCalls != 0 {
+		t.Fatalf("expected no tool calls for plain XML payload, got %d events=%#v", toolCalls, events)
+	}
+	if textContent.String() != chunk {
+		t.Fatalf("expected XML payload to pass through unchanged, got %q", textContent.String())
+	}
+}
+
+func TestProcessToolSieveNonToolXMLKeepsSuffixForToolParsing(t *testing.T) {
+	var state toolStreamSieveState
+	chunk := `<tool_call><title>plain xml</title></tool_call><invoke name="read_file"><parameters>{"path":"README.MD"}</parameters></invoke>`
+	events := processToolSieveChunk(&state, chunk, []string{"read_file"})
+	events = append(events, flushToolSieve(&state, []string{"read_file"})...)
+
+	var textContent strings.Builder
+	toolCalls := 0
+	for _, evt := range events {
+		textContent.WriteString(evt.Content)
+		toolCalls += len(evt.ToolCalls)
+	}
+	if !strings.Contains(textContent.String(), `<tool_call><title>plain xml</title></tool_call>`) {
+		t.Fatalf("expected leading non-tool XML to be preserved, got %q", textContent.String())
+	}
+	if strings.Contains(textContent.String(), `<invoke name="read_file">`) {
+		t.Fatalf("expected invoke tool XML to be intercepted, got %q", textContent.String())
+	}
+	if toolCalls != 1 {
+		t.Fatalf("expected exactly one parsed tool call from suffix, got %d events=%#v", toolCalls, events)
+	}
+}
+
 func TestProcessToolSievePartialXMLTagHeldBack(t *testing.T) {
 	var state toolStreamSieveState
 	// Chunk ends with a partial XML tool tag.
@@ -104,6 +147,7 @@ func TestFindToolSegmentStartDetectsXMLToolCalls(t *testing.T) {
 		want  int
 	}{
 		{"tool_calls_tag", "some text <tool_calls>\n", 10},
+		{"gemini_function_call_json", `some text {"functionCall":{"name":"search","args":{"q":"latest"}}}`, 10},
 		{"tool_call_tag", "prefix <tool_call>\n", 7},
 		{"invoke_tag", "text <invoke name=\"foo\">body</invoke>", 5},
 		{"function_call_tag", "<function_call name=\"foo\">body</function_call>", 0},
@@ -116,6 +160,81 @@ func TestFindToolSegmentStartDetectsXMLToolCalls(t *testing.T) {
 				t.Fatalf("findToolSegmentStart(%q) = %d, want %d", tc.input, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestFindToolSegmentStartIgnoresFunctionCallProse(t *testing.T) {
+	input := "Please explain the functionCall API field and how clients should parse it."
+	if got := findToolSegmentStart(input); got != -1 {
+		t.Fatalf("expected no tool segment start for prose, got %d", got)
+	}
+}
+
+func TestFindToolSegmentStartDetectsQuotedFunctionCallKey(t *testing.T) {
+	input := `prefix {"functionCall": {"name":"search_web","args":{"query":"x"}}}`
+	want := strings.Index(input, "{")
+	if got := findToolSegmentStart(input); got != want {
+		t.Fatalf("expected JSON object start %d, got %d", want, got)
+	}
+}
+
+func TestFindToolSegmentStartDetectsLooseFunctionCallKey(t *testing.T) {
+	input := `prefix {functionCall: {"name":"search_web","args":{"query":"x"}}}`
+	want := strings.Index(input, "{")
+	if got := findToolSegmentStart(input); got != want {
+		t.Fatalf("expected JSON object start %d, got %d", want, got)
+	}
+}
+
+func TestFindToolSegmentStartPrefersQuotedFunctionCallOverEarlierBareProse(t *testing.T) {
+	input := `prefix {note} functionCall: docs hint {"functionCall":{"name":"search_web","args":{"query":"x"}}}`
+	want := strings.Index(input, `{"functionCall"`)
+	if got := findToolSegmentStart(input); got != want {
+		t.Fatalf("expected quoted functionCall JSON start %d, got %d", want, got)
+	}
+}
+
+func TestFindToolSegmentStartIgnoresLooseFunctionCallProse(t *testing.T) {
+	input := "Please explain why functionCall: is used in documentation examples."
+	if got := findToolSegmentStart(input); got != -1 {
+		t.Fatalf("expected no tool segment start for prose, got %d", got)
+	}
+}
+
+func TestProcessToolSieveDoesNotBufferFunctionCallProse(t *testing.T) {
+	var state toolStreamSieveState
+	chunk := "Please explain the functionCall API field and keep streaming this sentence."
+	events := processToolSieveChunk(&state, chunk, []string{"search_web"})
+	var text string
+	for _, evt := range events {
+		text += evt.Content
+		if len(evt.ToolCalls) > 0 {
+			t.Fatalf("expected no tool calls for prose, got %#v", evt.ToolCalls)
+		}
+	}
+	if text != chunk {
+		t.Fatalf("expected prose to pass through immediately, got %q", text)
+	}
+}
+
+func TestProcessToolSieveDetectsGeminiFunctionCallPayload(t *testing.T) {
+	var state toolStreamSieveState
+	events := processToolSieveChunk(&state, `{"functionCall":{"name":"search_web","args":{"query":"latest"}}}`, []string{"search_web"})
+	events = append(events, flushToolSieve(&state, []string{"search_web"})...)
+
+	var textContent string
+	var toolCalls int
+	for _, evt := range events {
+		if evt.Content != "" {
+			textContent += evt.Content
+		}
+		toolCalls += len(evt.ToolCalls)
+	}
+	if toolCalls != 1 {
+		t.Fatalf("expected one tool call from functionCall payload, got events=%#v", events)
+	}
+	if strings.Contains(strings.ToLower(textContent), "functioncall") {
+		t.Fatalf("functionCall json leaked into text content: %q", textContent)
 	}
 }
 
@@ -288,7 +407,7 @@ func TestOpeningXMLTagNotLeakedAsContent(t *testing.T) {
 
 func TestProcessToolSieveInterceptsAttemptCompletionLeak(t *testing.T) {
 	var state toolStreamSieveState
-	// Simulate an agent outputting attempt_completion XML tag 
+	// Simulate an agent outputting attempt_completion XML tag
 	// which shouldn't leak to text output, even if it fails to parse as a valid tool.
 	chunks := []string{
 		"Done with task.\n",

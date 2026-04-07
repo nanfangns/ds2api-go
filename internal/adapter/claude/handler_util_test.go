@@ -93,8 +93,11 @@ func TestNormalizeClaudeMessagesToolUseToAssistantToolCalls(t *testing.T) {
 		t.Fatalf("expected call id preserved, got %#v", call)
 	}
 	content, _ := m["content"].(string)
-	if !containsStr(content, "search_web") || !containsStr(content, `"arguments":"{\"query\":\"latest\"}"`) {
-		t.Fatalf("expected assistant content to include serialized tool call for prompt roundtrip, got %q", content)
+	if !containsStr(content, "<tool_calls>") || !containsStr(content, "<tool_name>search_web</tool_name>") {
+		t.Fatalf("expected assistant content to include XML tool call history, got %q", content)
+	}
+	if !containsStr(content, `<parameters>{"query":"latest"}</parameters>`) {
+		t.Fatalf("expected assistant content to include serialized parameters, got %q", content)
 	}
 }
 
@@ -222,6 +225,47 @@ func TestNormalizeClaudeMessagesToolResultNonTextPayloadStringified(t *testing.T
 	}
 }
 
+func TestNormalizeClaudeMessagesBackfillsToolResultCallIDByName(t *testing.T) {
+	msgs := []any{
+		map[string]any{
+			"role": "assistant",
+			"content": []any{
+				map[string]any{
+					"type":  "tool_use",
+					"name":  "search_web",
+					"input": map[string]any{"query": "latest"},
+				},
+			},
+		},
+		map[string]any{
+			"role": "user",
+			"content": []any{
+				map[string]any{
+					"type":    "tool_result",
+					"name":    "search_web",
+					"content": "ok",
+				},
+			},
+		},
+	}
+
+	got := normalizeClaudeMessages(msgs)
+	if len(got) != 2 {
+		t.Fatalf("expected 2 messages, got %#v", got)
+	}
+	assistant, _ := got[0].(map[string]any)
+	tc, _ := assistant["tool_calls"].([]any)
+	call, _ := tc[0].(map[string]any)
+	callID, _ := call["id"].(string)
+	if !strings.HasPrefix(callID, "call_claude_") {
+		t.Fatalf("expected generated call id, got %#v", call)
+	}
+	toolMsg, _ := got[1].(map[string]any)
+	if toolMsg["tool_call_id"] != callID {
+		t.Fatalf("expected tool_result to reuse generated id, got %#v", toolMsg)
+	}
+}
+
 // ─── buildClaudeToolPrompt ───────────────────────────────────────────
 
 func TestBuildClaudeToolPromptSingleTool(t *testing.T) {
@@ -250,9 +294,6 @@ func TestBuildClaudeToolPromptSingleTool(t *testing.T) {
 	}
 	if !containsStr(prompt, "<tool_calls>") {
 		t.Fatalf("expected XML tool_calls format in prompt")
-	}
-	if containsStr(prompt, "TOOL_CALL_HISTORY") || containsStr(prompt, "TOOL_RESULT_HISTORY") {
-		t.Fatalf("expected legacy tool history markers removed from prompt")
 	}
 	if !containsStr(prompt, "TOOL CALL FORMAT") {
 		t.Fatalf("expected tool call format header in prompt")

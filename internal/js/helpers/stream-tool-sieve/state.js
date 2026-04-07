@@ -1,6 +1,7 @@
 'use strict';
 
-const TOOL_SIEVE_CONTEXT_TAIL_LIMIT = 4096;
+// Keep in sync with Go toolSieveContextTailLimit.
+const TOOL_SIEVE_CONTEXT_TAIL_LIMIT = 2048;
 
 function createToolSieveState() {
   return {

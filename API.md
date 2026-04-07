@@ -4,6 +4,8 @@
 
 本文档描述当前 Go 代码库的实际 API 行为。
 
+文档导航：[总览](README.MD) / [架构说明](docs/ARCHITECTURE.md) / [部署指南](docs/DEPLOY.md) / [测试指南](docs/TESTING.md)
+
 ---
 
 ## 目录
@@ -31,6 +33,13 @@
 | 健康检查 | `GET /healthz`、`GET /readyz` |
 | CORS | 已启用（`Access-Control-Allow-Origin: *`，允许 `Content-Type`, `Authorization`, `X-API-Key`, `X-Ds2-Target-Account`, `X-Vercel-Protection-Bypass`） |
 
+### 3.0 接口适配层说明
+
+- OpenAI / Claude / Gemini 三套协议已统一挂在同一 `chi` 路由树上，由 `internal/server/router.go` 负责装配。
+- 适配器层职责收敛为：**请求归一化 → DeepSeek 调用 → 协议形态渲染**，减少历史版本中“同能力多处实现”的分叉。
+- Tool Calling 的解析策略在 Go 与 Node Runtime 间保持一致：优先结构化解析（JSON/XML/invoke/markup），并在流式场景执行防泄漏筛分。
+- `Admin API` 将配置与运行时策略分开：`/admin/config*` 管静态配置，`/admin/settings*` 管运行时行为。
+
 ---
 
 ## 配置最佳实践
@@ -45,8 +54,7 @@ cp config.example.json config.json
 按部署方式使用：
 
 - 本地运行：直接读取 `config.json`
-- Docker / Vercel：从 `config.json` 生成 Base64，填入 `DS2API_CONFIG_JSON`
-- 兼容写法：`DS2API_CONFIG_JSON` 也可直接填原始 JSON；`CONFIG_JSON` 是旧版兼容回退变量
+- Docker / Vercel：从 `config.json` 生成 Base64，填入 `DS2API_CONFIG_JSON`，也可以直接填原始 JSON
 
 ```bash
 DS2API_CONFIG_JSON="$(base64 < config.json | tr -d '\n')"
@@ -91,7 +99,9 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 | 方法 | 路径 | 鉴权 | 说明 |
 | --- | --- | --- | --- |
 | GET | `/healthz` | 无 | 存活探针 |
+| HEAD | `/healthz` | 无 | 存活探针（无响应体） |
 | GET | `/readyz` | 无 | 就绪探针 |
+| HEAD | `/readyz` | 无 | 就绪探针（无响应体） |
 | GET | `/v1/models` | 无 | OpenAI 模型列表 |
 | GET | `/v1/models/{id}` | 无 | OpenAI 单模型查询（支持 alias 入参） |
 | POST | `/v1/chat/completions` | 业务 | OpenAI 对话补全 |
@@ -130,6 +140,9 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 | POST | `/admin/accounts/sessions/delete-all` | Admin | 删除某账号的全部会话 |
 | POST | `/admin/import` | Admin | 批量导入 keys/accounts |
 | POST | `/admin/test` | Admin | 测试当前 API 可用性 |
+| POST | `/admin/dev/raw-samples/capture` | Admin | 直接发起一次请求并保存为 raw sample |
+| GET | `/admin/dev/raw-samples/query` | Admin | 按问题关键词查询当前内存抓包链 |
+| POST | `/admin/dev/raw-samples/save` | Admin | 把命中的内存抓包链保存为 raw sample |
 | POST | `/admin/vercel/sync` | Admin | 同步配置到 Vercel |
 | GET | `/admin/vercel/status` | Admin | Vercel 同步状态 |
 | POST | `/admin/vercel/status` | Admin | Vercel 同步状态 / 草稿对比 |
@@ -256,6 +269,7 @@ data: [DONE]
 - `deepseek-reasoner` / `deepseek-reasoner-search` 模型输出 `delta.reasoning_content`
 - 普通文本输出 `delta.content`
 - 最后一段包含 `finish_reason` 和 `usage`
+- token 计数优先透传上游 DeepSeek SSE（如 `accumulated_token_usage` / `token_usage`）；仅在上游缺失时回退本地估算
 
 #### Tool Calls
 
@@ -378,6 +392,7 @@ data: [DONE]
 ## Claude 兼容接口
 
 除标准路径 `/anthropic/v1/*` 外，还支持快捷路径 `/v1/messages`、`/messages`、`/v1/messages/count_tokens`、`/messages/count_tokens`。
+实现上统一走 OpenAI Chat Completions 解析与回译链路，避免多套解析逻辑分叉维护。
 
 ### `GET /anthropic/v1/models`
 
@@ -500,8 +515,6 @@ data: {"type":"message_stop"}
 }
 ```
 
-返回项还会包含 `test_status`，当前值通常为 `ok` 或 `failed`。
-
 ---
 
 ## Gemini 兼容接口
@@ -514,6 +527,7 @@ data: {"type":"message_stop"}
 - `/v1/models/{model}:streamGenerateContent`（兼容路径）
 
 鉴权方式同业务接口（`Authorization: Bearer <token>` 或 `x-api-key`）。
+实现上统一走 OpenAI Chat Completions 解析与回译链路，避免多套解析逻辑分叉维护。
 
 ### `POST /v1beta/models/{model}:generateContent`
 
@@ -532,6 +546,7 @@ data: {"type":"message_stop"}
 - 常规文本：持续返回增量文本 chunk
 - `tools` 场景：会缓冲并在结束时输出 `functionCall` 结构
 - 结束 chunk：包含 `finishReason: "STOP"` 与 `usageMetadata`
+- token 计数优先透传上游 DeepSeek SSE（如 `accumulated_token_usage` / `token_usage`）；仅在上游缺失时回退本地估算
 
 ---
 
@@ -596,6 +611,9 @@ data: {"type":"message_stop"}
 {
   "keys": ["k1", "k2"],
   "env_backed": false,
+  "env_source_present": true,
+  "env_writeback_enabled": true,
+  "config_path": "/data/config.json",
   "accounts": [
     {
       "identifier": "user@example.com",
@@ -638,24 +656,27 @@ data: {"type":"message_stop"}
 
 - `success`
 - `admin`（`has_password_hash`、`jwt_expire_hours`、`jwt_valid_after_unix`、`default_password_warning`）
-- `runtime`（`account_max_inflight`、`account_max_queue`、`global_max_inflight`）
-- `toolcall` / `responses` / `embeddings`
-- `auto_delete`（`sessions`）
+- `runtime`（`account_max_inflight`、`account_max_queue`、`global_max_inflight`、`token_refresh_interval_hours`）
+- `compat`（`wide_input_strict_output`、`strip_reference_markers`）
+- `responses` / `embeddings`
+- `auto_delete`（`mode`：`none` / `single` / `all`；旧配置 `sessions=true` 仍按 `all` 处理）
 - `claude_mapping` / `model_aliases`
 - `env_backed`、`needs_vercel_sync`
+- `toolcall` 策略已固定为 `feature_match + high`，不再通过 settings 返回或修改
 
 ### `PUT /admin/settings`
 
 热更新运行时设置。支持更新：
 
 - `admin.jwt_expire_hours`
-- `runtime.account_max_inflight` / `runtime.account_max_queue` / `runtime.global_max_inflight`
-- `toolcall.mode` / `toolcall.early_emit_confidence`
+- `runtime.account_max_inflight` / `runtime.account_max_queue` / `runtime.global_max_inflight` / `runtime.token_refresh_interval_hours`
+- `compat.wide_input_strict_output` / `compat.strip_reference_markers`
 - `responses.store_ttl_seconds`
 - `embeddings.provider`
-- `auto_delete.sessions`
+- `auto_delete.mode`
 - `claude_mapping`
 - `model_aliases`
+- `toolcall` 策略已固定，不再作为可写入字段
 
 ### `POST /admin/settings/password`
 
@@ -678,7 +699,9 @@ data: {"type":"message_stop"}
 
 请求可直接传配置对象，或使用 `{"config": {...}, "mode":"merge"}` 包裹格式。
 也支持在查询参数里传 `?mode=merge` / `?mode=replace`。
-导入时会接受 `keys`、`accounts`、`claude_mapping` / `claude_model_mapping`、`model_aliases`、`admin`、`runtime`、`toolcall`、`responses`、`embeddings`、`auto_delete` 等字段。
+导入时会接受 `keys`、`accounts`、`claude_mapping` / `claude_model_mapping`、`model_aliases`、`admin`、`runtime`、`responses`、`embeddings`、`auto_delete` 等字段；`toolcall` 相关字段会被忽略。
+
+> `compat` 相关字段请通过 `/admin/settings` 或配置文件管理；该导入接口不会更新 `compat`。
 
 ### `GET /admin/config/export`
 
@@ -752,17 +775,25 @@ data: {"type":"message_stop"}
   "available_accounts": ["a@example.com"],
   "in_use_accounts": ["b@example.com"],
   "max_inflight_per_account": 2,
-  "recommended_concurrency": 8
+  "global_max_inflight": 8,
+  "recommended_concurrency": 8,
+  "waiting": 0,
+  "max_queue_size": 8
 }
 ```
 
 | 字段 | 说明 |
 | --- | --- |
-| `available` | 当前可用账号数 |
-| `in_use` | 当前使用中的账号数 |
+| `available` | 仍有剩余并发槽位的账号数 |
+| `in_use` | 当前已占用的 in-flight 槽位数 |
 | `total` | 总账号数 |
+| `available_accounts` | 仍有剩余并发槽位的账号 ID 列表 |
+| `in_use_accounts` | 当前处于使用中的账号 ID 列表 |
 | `max_inflight_per_account` | 每账号并发上限 |
+| `global_max_inflight` | 全局并发上限 |
 | `recommended_concurrency` | 建议并发值（`total × max_inflight_per_account`） |
+| `waiting` | 当前等待中的请求数 |
+| `max_queue_size` | 等待队列上限 |
 
 ### `POST /admin/accounts/test`
 
@@ -864,6 +895,74 @@ data: {"type":"message_stop"}
 }
 ```
 
+### `POST /admin/dev/raw-samples/capture`
+
+直接通过服务自身发起一次 `/v1/chat/completions` 请求，并把请求元信息和上游原始 SSE 保存到 `tests/raw_stream_samples/<sample-id>/`。
+
+常用请求字段：
+
+| 字段 | 必填 | 默认值 | 说明 |
+| --- | --- | --- | --- |
+| `message` | 否 | `你好` | 便捷单轮用户消息 |
+| `messages` | 否 | 自动由 `message` 生成 | OpenAI 风格消息数组 |
+| `model` | 否 | `deepseek-chat` | 目标模型 |
+| `stream` | 否 | `true` | 建议保留流式，以记录原始 SSE |
+| `api_key` | 否 | 配置中第一个 key | 调用业务接口使用的 key |
+| `sample_id` | 否 | 自动生成 | 样本目录名 |
+
+成功时会在响应头里附带：
+
+- `X-Ds2-Sample-Id`
+- `X-Ds2-Sample-Dir`
+- `X-Ds2-Sample-Meta`
+- `X-Ds2-Sample-Upstream`
+
+如果请求本身成功，但当前进程没有记录到新的上游抓包，会返回：
+
+```json
+{"detail":"no upstream capture was recorded"}
+```
+
+### `GET /admin/dev/raw-samples/query`
+
+按关键词查询当前进程内存里的抓包记录，并按 `chat_session_id` 归并 `completion + continue` 链。
+
+**查询参数**：
+
+| 参数 | 默认值 | 说明 |
+| --- | --- | --- |
+| `q` | 空 | 按请求体/响应体关键词模糊匹配 |
+| `limit` | `20` | 返回链条数上限 |
+
+**响应字段**包含：
+
+- `items[].chain_key`
+- `items[].capture_ids`
+- `items[].round_count`
+- `items[].initial_label`
+- `items[].request_preview`
+- `items[].response_preview`
+
+### `POST /admin/dev/raw-samples/save`
+
+把当前内存中的某条抓包链落盘为 `tests/raw_stream_samples/<sample-id>/`。
+
+支持以下任一种选中方式：
+
+```json
+{"chain_key":"session:xxxx","sample_id":"tmp-from-memory"}
+```
+
+```json
+{"capture_id":"cap_xxx","sample_id":"tmp-from-memory"}
+```
+
+```json
+{"query":"广州天气","sample_id":"tmp-from-memory"}
+```
+
+成功响应会返回 `sample_id`、`dir`、`meta_path`、`upstream_path`。
+
 ### `POST /admin/vercel/sync`
 
 | 字段 | 必填 | 说明 |
@@ -933,15 +1032,15 @@ data: {"type":"message_stop"}
 ```json
 {
   "success": true,
-  "current_version": "2.3.5",
-  "current_tag": "v2.3.5",
+  "current_version": "3.0.0",
+  "current_tag": "v3.0.0",
   "source": "file:VERSION",
   "checked_at": "2026-03-29T00:00:00Z",
-  "latest_tag": "v2.3.6",
-  "latest_version": "2.3.6",
-  "release_url": "https://github.com/CJackHwang/ds2api/releases/tag/v2.3.6",
+  "latest_tag": "v3.0.0",
+  "latest_version": "3.0.0",
+  "release_url": "https://github.com/CJackHwang/ds2api/releases/tag/v3.0.0",
   "published_at": "2026-03-28T12:00:00Z",
-  "has_update": true
+  "has_update": false
 }
 ```
 

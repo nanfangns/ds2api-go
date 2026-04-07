@@ -56,9 +56,9 @@ internal/adapter/openai/tool_sieve_core.go
 internal/adapter/openai/tool_sieve_xml.go
 internal/adapter/openai/tool_sieve_jsonscan.go
 
-internal/util/toolcalls_parse.go
-internal/util/toolcalls_candidates.go
-internal/util/toolcalls_format.go
+internal/toolcall/toolcalls_parse.go
+internal/toolcall/toolcalls_candidates.go
+internal/toolcall/toolcalls_format.go
 
 internal/adapter/claude/handler_routes.go
 internal/adapter/claude/handler_messages.go

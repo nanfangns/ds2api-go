@@ -96,6 +96,7 @@ func looksLikeBase64Payload(v string) bool {
 	return true
 }
 
+//nolint:unused // helper kept for compatibility with upcoming sanitize pipeline.
 func marshalCompactJSON(v any) string {
 	b, err := json.Marshal(v)
 	if err != nil {

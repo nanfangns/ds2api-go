@@ -21,6 +21,9 @@ type ConfigStore interface {
 	Update(mutator func(*config.Config) error) error
 	ExportJSONAndBase64() (string, string, error)
 	IsEnvBacked() bool
+	IsEnvWritebackEnabled() bool
+	HasEnvConfigSource() bool
+	ConfigPath() string
 	SetVercelSync(hash string, ts int64) error
 	AdminPasswordHash() string
 	AdminJWTExpireHours() int
@@ -28,6 +31,9 @@ type ConfigStore interface {
 	RuntimeAccountMaxInflight() int
 	RuntimeAccountMaxQueue(defaultSize int) int
 	RuntimeGlobalMaxInflight(defaultSize int) int
+	RuntimeTokenRefreshIntervalHours() int
+	AutoDeleteMode() string
+	CompatStripReferenceMarkers() bool
 	AutoDeleteSessions() bool
 }
 
@@ -35,6 +41,10 @@ type PoolController interface {
 	Reset()
 	Status() map[string]any
 	ApplyRuntimeLimits(maxInflightPerAccount, maxQueueSize, globalMaxInflight int)
+}
+
+type OpenAIChatCaller interface {
+	ChatCompletions(w http.ResponseWriter, r *http.Request)
 }
 
 type DeepSeekCaller interface {

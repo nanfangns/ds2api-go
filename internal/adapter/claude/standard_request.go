@@ -18,7 +18,7 @@ func normalizeClaudeRequest(store ConfigReader, req map[string]any) (claudeNorma
 	model, _ := req["model"].(string)
 	messagesRaw, _ := req["messages"].([]any)
 	if strings.TrimSpace(model) == "" || len(messagesRaw) == 0 {
-		return claudeNormalizedRequest{}, fmt.Errorf("Request must include 'model' and 'messages'.")
+		return claudeNormalizedRequest{}, fmt.Errorf("request must include 'model' and 'messages'")
 	}
 	if _, ok := req["max_tokens"]; !ok {
 		req["max_tokens"] = 8192

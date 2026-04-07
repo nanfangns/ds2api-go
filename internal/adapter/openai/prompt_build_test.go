@@ -47,8 +47,11 @@ func TestBuildOpenAIFinalPrompt_HandlerPathIncludesToolRoundtripSemantics(t *tes
 	if !strings.Contains(finalPrompt, `"condition":"sunny"`) {
 		t.Fatalf("handler finalPrompt should preserve tool output content: %q", finalPrompt)
 	}
-	if strings.Contains(finalPrompt, "[TOOL_CALL_HISTORY]") || strings.Contains(finalPrompt, "[TOOL_RESULT_HISTORY]") {
-		t.Fatalf("handler finalPrompt should not include synthetic history markers: %q", finalPrompt)
+	if !strings.Contains(finalPrompt, "<tool_calls>") {
+		t.Fatalf("handler finalPrompt should preserve assistant tool history: %q", finalPrompt)
+	}
+	if !strings.Contains(finalPrompt, "<tool_name>get_weather</tool_name>") {
+		t.Fatalf("handler finalPrompt should include tool name history: %q", finalPrompt)
 	}
 }
 
@@ -71,16 +74,13 @@ func TestBuildOpenAIFinalPrompt_VercelPreparePathKeepsFinalAnswerInstruction(t *
 	}
 
 	finalPrompt, _ := buildOpenAIFinalPrompt(messages, tools, "")
-	if !strings.Contains(finalPrompt, "After receiving a tool result, use it directly.") {
-		t.Fatalf("vercel prepare finalPrompt missing final-answer instruction: %q", finalPrompt)
-	}
-	if !strings.Contains(finalPrompt, "Only call another tool if the result is insufficient.") {
-		t.Fatalf("vercel prepare finalPrompt missing retry guard instruction: %q", finalPrompt)
+	if !strings.Contains(finalPrompt, "Remember: Output ONLY the <tool_calls>...</tool_calls> XML block when calling tools.") {
+		t.Fatalf("vercel prepare finalPrompt missing final tool-call anchor instruction: %q", finalPrompt)
 	}
 	if !strings.Contains(finalPrompt, "TOOL CALL FORMAT") {
 		t.Fatalf("vercel prepare finalPrompt missing xml format instruction: %q", finalPrompt)
 	}
-	if !strings.Contains(finalPrompt, "Do NOT wrap the XML in markdown code fences") {
+	if !strings.Contains(finalPrompt, "Do NOT wrap XML in markdown fences") {
 		t.Fatalf("vercel prepare finalPrompt missing no-fence xml instruction: %q", finalPrompt)
 	}
 	if strings.Contains(finalPrompt, "```json") {

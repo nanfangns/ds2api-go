@@ -85,7 +85,7 @@ func (h *Handler) addKey(w http.ResponseWriter, r *http.Request) {
 	err := h.Store.Update(func(c *config.Config) error {
 		for _, k := range c.Keys {
 			if k == key {
-				return fmt.Errorf("Key 已存在")
+				return fmt.Errorf("key 已存在")
 			}
 		}
 		c.Keys = append(c.Keys, key)
@@ -109,7 +109,7 @@ func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 		if idx < 0 {
-			return fmt.Errorf("Key 不存在")
+			return fmt.Errorf("key 不存在")
 		}
 		c.Keys = append(c.Keys[:idx], c.Keys[idx+1:]...)
 		return nil

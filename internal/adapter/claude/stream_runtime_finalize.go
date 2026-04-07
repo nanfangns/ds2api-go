@@ -1,6 +1,7 @@
 package claude
 
 import (
+	"ds2api/internal/toolcall"
 	"encoding/json"
 	"fmt"
 	"time"
@@ -43,12 +44,12 @@ func (s *claudeStreamRuntime) finalize(stopReason string) {
 	s.closeTextBlock()
 
 	finalThinking := s.thinking.String()
-	finalText := s.text.String()
+	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
 
 	if s.bufferToolContent {
-		detected := util.ParseStandaloneToolCalls(finalText, s.toolNames)
+		detected := toolcall.ParseStandaloneToolCalls(finalText, s.toolNames)
 		if len(detected) == 0 && finalText == "" && finalThinking != "" {
-			detected = util.ParseStandaloneToolCalls(finalThinking, s.toolNames)
+			detected = toolcall.ParseStandaloneToolCalls(finalThinking, s.toolNames)
 		}
 		if len(detected) > 0 {
 			stopReason = "tool_use"
@@ -64,7 +65,7 @@ func (s *claudeStreamRuntime) finalize(stopReason string) {
 						"input": map[string]any{},
 					},
 				})
-				
+
 				inputBytes, _ := json.Marshal(tc.Input)
 				s.send("content_block_delta", map[string]any{
 					"type":  "content_block_delta",

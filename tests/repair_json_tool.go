@@ -27,7 +27,7 @@ func repairInvalidJSONBackslashes(s string) string {
 						isHex := true
 						for j := 1; j <= 4; j++ {
 							r := runes[i+1+j]
-							if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+							if (r < '0' || r > '9') && (r < 'a' || r > 'f') && (r < 'A' || r > 'F') {
 								isHex = false
 								break
 							}

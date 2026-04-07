@@ -43,7 +43,7 @@ func (h *Handler) getVersion(w http.ResponseWriter, _ *http.Request) {
 		writeJSON(w, http.StatusOK, resp)
 		return
 	}
-	defer r.Body.Close()
+	defer func() { _ = r.Body.Close() }()
 	if r.StatusCode < 200 || r.StatusCode >= 300 {
 		resp["check_error"] = "github api status: " + r.Status
 		writeJSON(w, http.StatusOK, resp)

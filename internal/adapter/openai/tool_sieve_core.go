@@ -3,7 +3,7 @@ package openai
 import (
 	"strings"
 
-	"ds2api/internal/util"
+	"ds2api/internal/toolcall"
 )
 
 func processToolSieveChunk(state *toolStreamSieveState, chunk string, toolNames []string) []toolStreamEvent {
@@ -183,13 +183,16 @@ func findToolSegmentStart(s string) int {
 		return -1
 	}
 	lower := strings.ToLower(s)
-	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]", "[tool_result_history]"}
+	keywords := []string{"tool_calls", "\"function\"", "function.name:", "\"tool_use\""}
 	bestKeyIdx := -1
 	for _, kw := range keywords {
 		idx := strings.Index(lower, kw)
 		if idx >= 0 && (bestKeyIdx < 0 || idx < bestKeyIdx) {
 			bestKeyIdx = idx
 		}
+	}
+	if fnKeyIdx := findQuotedFunctionCallKeyStart(s); fnKeyIdx >= 0 && (bestKeyIdx < 0 || fnKeyIdx < bestKeyIdx) {
+		bestKeyIdx = fnKeyIdx
 	}
 	// Also detect XML tool call tags.
 	for _, tag := range xmlToolTagsToDetect {
@@ -223,7 +226,7 @@ func findToolSegmentStart(s string) int {
 	return start
 }
 
-func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix string, calls []util.ParsedToolCall, suffix string, ready bool) {
+func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix string, calls []toolcall.ParsedToolCall, suffix string, ready bool) {
 	captured := state.capture.String()
 	if captured == "" {
 		return "", nil, "", false
@@ -240,12 +243,15 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 
 	lower := strings.ToLower(captured)
 	keyIdx := -1
-	keywords := []string{"tool_calls", "\"function\"", "function.name:", "[tool_call_history]", "[tool_result_history]"}
+	keywords := []string{"tool_calls", "\"function\"", "function.name:", "\"tool_use\""}
 	for _, kw := range keywords {
 		idx := strings.Index(lower, kw)
 		if idx >= 0 && (keyIdx < 0 || idx < keyIdx) {
 			keyIdx = idx
 		}
+	}
+	if fnKeyIdx := findQuotedFunctionCallKeyStart(captured); fnKeyIdx >= 0 && (keyIdx < 0 || fnKeyIdx < keyIdx) {
+		keyIdx = fnKeyIdx
 	}
 
 	if keyIdx < 0 {
@@ -253,9 +259,6 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 	}
 	start := strings.LastIndex(captured[:keyIdx], "{")
 	if start < 0 {
-		if blockStart, blockEnd, ok := extractToolHistoryBlock(captured, keyIdx); ok {
-			return captured[:blockStart], nil, captured[blockEnd:], true
-		}
 		start = keyIdx
 	}
 	obj, end, ok := extractJSONObjectFrom(captured, start)
@@ -264,7 +267,7 @@ func consumeToolCapture(state *toolStreamSieveState, toolNames []string) (prefix
 	}
 	prefixPart := captured[:start]
 	suffixPart := captured[end:]
-	parsed := util.ParseStandaloneToolCallsDetailed(obj, toolNames)
+	parsed := toolcall.ParseStandaloneToolCallsDetailed(obj, toolNames)
 	if len(parsed.Calls) == 0 {
 		if parsed.SawToolCallSyntax && parsed.RejectedByPolicy {
 			// Parsed as tool-call payload but rejected by schema/policy:
