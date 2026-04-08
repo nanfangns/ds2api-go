@@ -66,9 +66,7 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 		}
 		code, bizCode, msg, bizMsg := extractResponseStatus(resp)
 		if status == http.StatusOK && code == 0 && bizCode == 0 {
-			data, _ := resp["data"].(map[string]any)
-			bizData, _ := data["biz_data"].(map[string]any)
-			sessionID, _ := bizData["id"].(string)
+			sessionID := extractCreateSessionID(resp)
 			if sessionID != "" {
 				return sessionID, nil
 			}
@@ -202,6 +200,22 @@ func isAuthIndicativeBizFailure(msg string, bizMsg string) bool {
 		}
 	}
 	return false
+}
+
+// DeepSeek has returned create-session ids in both biz_data.id and
+// biz_data.chat_session.id across observed response variants; accept either.
+func extractCreateSessionID(resp map[string]any) string {
+	data, _ := resp["data"].(map[string]any)
+	bizData, _ := data["biz_data"].(map[string]any)
+	if sessionID, _ := bizData["id"].(string); strings.TrimSpace(sessionID) != "" {
+		return strings.TrimSpace(sessionID)
+	}
+	if chatSession, ok := bizData["chat_session"].(map[string]any); ok {
+		if sessionID, _ := chatSession["id"].(string); strings.TrimSpace(sessionID) != "" {
+			return strings.TrimSpace(sessionID)
+		}
+	}
+	return ""
 }
 
 func extractResponseStatus(resp map[string]any) (code int, bizCode int, msg string, bizMsg string) {

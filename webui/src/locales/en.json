@@ -199,7 +199,15 @@
             "chat": "Non-reasoning model",
             "reasoner": "Reasoning model",
             "chatSearch": "Non-reasoning model (with search)",
-            "reasonerSearch": "Reasoning model (with search)"
+            "reasonerSearch": "Reasoning model (with search)",
+            "expertChat": "Non-reasoning expert mode",
+            "expertReasoner": "Reasoning expert mode",
+            "expertChatSearch": "Non-reasoning expert mode (with search)",
+            "expertReasonerSearch": "Reasoning expert mode (with search)",
+            "visionChat": "Non-reasoning vision mode",
+            "visionReasoner": "Reasoning vision mode",
+            "visionChatSearch": "Non-reasoning vision mode (with search)",
+            "visionReasonerSearch": "Reasoning vision mode (with search)"
         },
         "missingApiKey": "Please provide an API key.",
         "requestFailed": "Request failed.",

@@ -49,6 +49,51 @@ func TestGetModelConfigDeepSeekReasonerSearch(t *testing.T) {
 	}
 }
 
+func TestGetModelConfigDeepSeekExpertChat(t *testing.T) {
+	thinking, search, ok := GetModelConfig("deepseek-expert-chat")
+	if !ok {
+		t.Fatal("expected ok for deepseek-expert-chat")
+	}
+	if thinking || search {
+		t.Fatalf("expected no thinking/search for deepseek-expert-chat, got thinking=%v search=%v", thinking, search)
+	}
+}
+
+func TestGetModelConfigDeepSeekExpertReasonerSearch(t *testing.T) {
+	thinking, search, ok := GetModelConfig("deepseek-expert-reasoner-search")
+	if !ok {
+		t.Fatal("expected ok for deepseek-expert-reasoner-search")
+	}
+	if !thinking || !search {
+		t.Fatalf("expected both true, got thinking=%v search=%v", thinking, search)
+	}
+}
+
+func TestGetModelConfigDeepSeekVisionReasonerSearch(t *testing.T) {
+	thinking, search, ok := GetModelConfig("deepseek-vision-reasoner-search")
+	if !ok {
+		t.Fatal("expected ok for deepseek-vision-reasoner-search")
+	}
+	if !thinking || !search {
+		t.Fatalf("expected both true, got thinking=%v search=%v", thinking, search)
+	}
+}
+
+func TestGetModelTypeDefaultExpertAndVision(t *testing.T) {
+	defaultType, ok := GetModelType("deepseek-chat")
+	if !ok || defaultType != "default" {
+		t.Fatalf("expected default model_type, got ok=%v model_type=%q", ok, defaultType)
+	}
+	expertType, ok := GetModelType("deepseek-expert-chat")
+	if !ok || expertType != "expert" {
+		t.Fatalf("expected expert model_type, got ok=%v model_type=%q", ok, expertType)
+	}
+	visionType, ok := GetModelType("deepseek-vision-chat")
+	if !ok || visionType != "vision" {
+		t.Fatalf("expected vision model_type, got ok=%v model_type=%q", ok, visionType)
+	}
+}
+
 func TestGetModelConfigCaseInsensitive(t *testing.T) {
 	thinking, search, ok := GetModelConfig("DeepSeek-Chat")
 	if !ok {
@@ -550,6 +595,30 @@ func TestOpenAIModelsResponse(t *testing.T) {
 	}
 	if len(data) == 0 {
 		t.Fatal("expected non-empty models list")
+	}
+	expected := map[string]bool{
+		"deepseek-chat":                   false,
+		"deepseek-reasoner":               false,
+		"deepseek-chat-search":            false,
+		"deepseek-reasoner-search":        false,
+		"deepseek-expert-chat":            false,
+		"deepseek-expert-reasoner":        false,
+		"deepseek-expert-chat-search":     false,
+		"deepseek-expert-reasoner-search": false,
+		"deepseek-vision-chat":            false,
+		"deepseek-vision-reasoner":        false,
+		"deepseek-vision-chat-search":     false,
+		"deepseek-vision-reasoner-search": false,
+	}
+	for _, model := range data {
+		if _, ok := expected[model.ID]; ok {
+			expected[model.ID] = true
+		}
+	}
+	for id, seen := range expected {
+		if !seen {
+			t.Fatalf("expected OpenAI model list to include %s", id)
+		}
 	}
 }
 

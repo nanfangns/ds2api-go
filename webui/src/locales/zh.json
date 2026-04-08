@@ -199,7 +199,15 @@
             "chat": "非思考模型",
             "reasoner": "思考模型",
             "chatSearch": "非思考模型 (带搜索)",
-            "reasonerSearch": "思考模型 (带搜索)"
+            "reasonerSearch": "思考模型 (带搜索)",
+            "expertChat": "非思考专家模式",
+            "expertReasoner": "思考专家模式",
+            "expertChatSearch": "非思考专家模式 (带搜索)",
+            "expertReasonerSearch": "思考专家模式 (带搜索)",
+            "visionChat": "非思考视觉模式",
+            "visionReasoner": "思考视觉模式",
+            "visionChatSearch": "非思考视觉模式 (带搜索)",
+            "visionReasonerSearch": "思考视觉模式 (带搜索)"
         },
         "missingApiKey": "请提供 API 密钥",
         "requestFailed": "请求失败",

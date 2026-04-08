@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -131,5 +132,80 @@ func TestDeleteAllSessions_RetryWithReloginOnDeleteFailure(t *testing.T) {
 	}
 	if updated.Token != "new-token" {
 		t.Fatalf("expected refreshed token persisted, got %q", updated.Token)
+	}
+}
+
+type completionPayloadDSMock struct {
+	payload map[string]any
+}
+
+func (m *completionPayloadDSMock) Login(_ context.Context, _ config.Account) (string, error) {
+	return "new-token", nil
+}
+
+func (m *completionPayloadDSMock) CreateSession(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
+	return "session-id", nil
+}
+
+func (m *completionPayloadDSMock) GetPow(_ context.Context, _ *auth.RequestAuth, _ int) (string, error) {
+	return "pow-ok", nil
+}
+
+func (m *completionPayloadDSMock) CallCompletion(_ context.Context, _ *auth.RequestAuth, payload map[string]any, _ string, _ int) (*http.Response, error) {
+	m.payload = payload
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader("data: {\"v\":\"ok\"}\n\ndata: [DONE]\n\n")),
+	}, nil
+}
+
+func (m *completionPayloadDSMock) DeleteAllSessionsForToken(_ context.Context, _ string) error {
+	return nil
+}
+
+func (m *completionPayloadDSMock) GetSessionCountForToken(_ context.Context, _ string) (*deepseek.SessionStats, error) {
+	return &deepseek.SessionStats{Success: true}, nil
+}
+
+func TestTestAccount_MessageModeUsesExpertModelTypeForExpertModel(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd","token":"seed-token"}]}`)
+	store := config.LoadStore()
+	ds := &completionPayloadDSMock{}
+	h := &Handler{Store: store, DS: ds}
+	acc, ok := store.FindAccount("batch@example.com")
+	if !ok {
+		t.Fatal("expected test account")
+	}
+
+	result := h.testAccount(context.Background(), acc, "deepseek-expert-chat", "hello")
+
+	if ok, _ := result["success"].(bool); !ok {
+		t.Fatalf("expected success=true, got %#v", result)
+	}
+	if got := ds.payload["model_type"]; got != "expert" {
+		t.Fatalf("expected model_type expert, got %#v", got)
+	}
+	if got := ds.payload["chat_session_id"]; got != "session-id" {
+		t.Fatalf("unexpected chat_session_id: %#v", got)
+	}
+}
+
+func TestTestAccount_MessageModeUsesVisionModelTypeForVisionModel(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd","token":"seed-token"}]}`)
+	store := config.LoadStore()
+	ds := &completionPayloadDSMock{}
+	h := &Handler{Store: store, DS: ds}
+	acc, ok := store.FindAccount("batch@example.com")
+	if !ok {
+		t.Fatal("expected test account")
+	}
+
+	result := h.testAccount(context.Background(), acc, "deepseek-vision-chat", "hello")
+
+	if ok, _ := result["success"].(bool); !ok {
+		t.Fatalf("expected success=true, got %#v", result)
+	}
+	if got := ds.payload["model_type"]; got != "vision" {
+		t.Fatalf("expected model_type vision, got %#v", got)
 	}
 }

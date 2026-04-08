@@ -15,7 +15,16 @@ import (
 	"ds2api/internal/config"
 	"ds2api/internal/deepseek"
 	"ds2api/internal/sse"
+	"ds2api/internal/util"
 )
+
+type modelAliasSnapshotReader struct {
+	aliases map[string]string
+}
+
+func (m modelAliasSnapshotReader) ModelAliases() map[string]string {
+	return m.aliases
+}
 
 func (h *Handler) testSingleAccount(w http.ResponseWriter, r *http.Request) {
 	var req map[string]any
@@ -150,16 +159,27 @@ func (h *Handler) testAccount(ctx context.Context, acc config.Account, model, me
 		return result
 	}
 	thinking, search, ok := config.GetModelConfig(model)
+	resolvedModel, resolved := config.ResolveModel(modelAliasSnapshotReader{
+		aliases: h.Store.Snapshot().ModelAliases,
+	}, model)
+	if resolved {
+		model = resolvedModel
+		thinking, search, ok = config.GetModelConfig(model)
+	}
 	if !ok {
 		thinking, search = false, false
 	}
-	_ = search
 	pow, err := h.DS.GetPow(proxyCtx, authCtx, 1)
 	if err != nil {
 		result["message"] = "获取 PoW 失败: " + err.Error()
 		return result
 	}
-	payload := map[string]any{"chat_session_id": sessionID, "prompt": deepseek.MessagesPrepare([]map[string]any{{"role": "user", "content": message}}), "ref_file_ids": []any{}, "thinking_enabled": thinking, "search_enabled": search}
+	payload := util.StandardRequest{
+		ResolvedModel: model,
+		FinalPrompt:   deepseek.MessagesPrepare([]map[string]any{{"role": "user", "content": message}}),
+		Thinking:      thinking,
+		Search:        search,
+	}.CompletionPayload(sessionID)
 	resp, err := h.DS.CallCompletion(proxyCtx, authCtx, payload, pow, 1)
 	if err != nil {
 		result["message"] = "请求失败: " + err.Error()
