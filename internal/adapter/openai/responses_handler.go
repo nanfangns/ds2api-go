@@ -65,9 +65,18 @@ func (h *Handler) Responses(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	r.Body = http.MaxBytesReader(w, r.Body, openAIGeneralMaxSize)
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "too large") {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeOpenAIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.preprocessInlineFileInputs(r.Context(), a, req); err != nil {
+		writeOpenAIInlineFileError(w, err)
 		return
 	}
 	traceID := requestTraceID(r)
@@ -117,7 +126,7 @@ func (h *Handler) handleResponsesNonStream(w http.ResponseWriter, resp *http.Res
 	stripReferenceMarkers := h.compatStripReferenceMarkers()
 	sanitizedThinking := cleanVisibleOutput(result.Thinking, stripReferenceMarkers)
 	sanitizedText := cleanVisibleOutput(result.Text, stripReferenceMarkers)
-	if writeUpstreamEmptyOutputError(w, sanitizedThinking, sanitizedText, result.ContentFilter) {
+	if writeUpstreamEmptyOutputError(w, sanitizedText, result.ContentFilter) {
 		return
 	}
 	textParsed := toolcall.ParseStandaloneToolCallsDetailed(sanitizedText, toolNames)

@@ -173,7 +173,7 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 
 ### `GET /v1/models`
 
-无需鉴权。返回当前支持的模型列表。
+无需鉴权。返回当前支持的 DeepSeek 原生模型列表。
 
 **响应示例**：
 
@@ -184,10 +184,20 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
     {"id": "deepseek-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
+    {"id": "deepseek-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
   ]
 }
 ```
+
+> 说明：`/v1/models` 返回的是规范化后的 DeepSeek 原生模型 ID；常见 alias 仅用于请求入参解析，不会在该接口中单独展开返回。
 
 ### 模型 alias 解析策略
 
@@ -211,7 +221,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-4o`、`gpt-5-codex`、`o3`、`claude-sonnet-4-5`） |
+| `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-4o`、`gpt-5-codex`、`o3`、`claude-sonnet-4-5`、`gemini-2.5-pro` 等） |
 | `messages` | array | ✅ | OpenAI 风格消息数组 |
 | `stream` | boolean | ❌ | 默认 `false` |
 | `tools` | array | ❌ | Function Calling 定义 |
@@ -414,7 +424,7 @@ data: [DONE]
 }
 ```
 
-> 说明：示例仅展示部分模型；实际返回包含 Claude 1.x/2.x/3.x/4.x 历史模型 ID 与常见别名。
+> 说明：示例仅展示部分模型；实际返回除当前主别名外，还包含 Claude 4.x snapshots，以及 3.x / 2.x / 1.x 历史模型 ID 与常见别名。
 
 ### `POST /anthropic/v1/messages`
 

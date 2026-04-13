@@ -313,6 +313,25 @@ func TestHandleNonStreamReturnsContentFilterErrorWhenUpstreamFilteredWithoutOutp
 	}
 }
 
+func TestHandleNonStreamReturns429WhenUpstreamHasOnlyThinking(t *testing.T) {
+	h := &Handler{}
+	resp := makeSSEHTTPResponse(
+		`data: {"p":"response/thinking_content","v":"Only thinking"}`,
+		`data: [DONE]`,
+	)
+	rec := httptest.NewRecorder()
+
+	h.handleNonStream(rec, context.Background(), resp, "cid-thinking-only", "deepseek-reasoner", "prompt", true, nil)
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected status 429 for thinking-only upstream output, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	out := decodeJSONBody(t, rec.Body.String())
+	errObj, _ := out["error"].(map[string]any)
+	if asString(errObj["code"]) != "upstream_empty_output" {
+		t.Fatalf("expected code=upstream_empty_output, got %#v", out)
+	}
+}
+
 func TestHandleStreamToolCallInterceptsWithoutRawContentLeak(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(

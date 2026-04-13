@@ -24,9 +24,10 @@ func normalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID 
 		responseModel = resolvedModel
 	}
 	toolPolicy := util.DefaultToolChoicePolicy()
-	finalPrompt, toolNames := buildOpenAIFinalPromptWithPolicy(messagesRaw, req["tools"], traceID, toolPolicy)
+	finalPrompt, toolNames := buildOpenAIFinalPromptWithPolicy(messagesRaw, req["tools"], traceID, toolPolicy, thinkingEnabled)
 	toolNames = ensureToolDetectionEnabled(toolNames, req["tools"])
 	passThrough := collectOpenAIChatPassThrough(req)
+	refFileIDs := collectOpenAIRefFileIDs(req)
 
 	return util.StandardRequest{
 		Surface:        "openai_chat",
@@ -40,6 +41,7 @@ func normalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID 
 		Stream:         util.ToBool(req["stream"]),
 		Thinking:       thinkingEnabled,
 		Search:         searchEnabled,
+		RefFileIDs:     refFileIDs,
 		PassThrough:    passThrough,
 	}, nil
 }
@@ -74,12 +76,13 @@ func normalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 	if err != nil {
 		return util.StandardRequest{}, err
 	}
-	finalPrompt, toolNames := buildOpenAIFinalPromptWithPolicy(messagesRaw, req["tools"], traceID, toolPolicy)
+	finalPrompt, toolNames := buildOpenAIFinalPromptWithPolicy(messagesRaw, req["tools"], traceID, toolPolicy, thinkingEnabled)
 	toolNames = ensureToolDetectionEnabled(toolNames, req["tools"])
 	if !toolPolicy.IsNone() {
 		toolPolicy.Allowed = namesToSet(toolNames)
 	}
 	passThrough := collectOpenAIChatPassThrough(req)
+	refFileIDs := collectOpenAIRefFileIDs(req)
 
 	return util.StandardRequest{
 		Surface:        "openai_responses",
@@ -93,6 +96,7 @@ func normalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 		Stream:         util.ToBool(req["stream"]),
 		Thinking:       thinkingEnabled,
 		Search:         searchEnabled,
+		RefFileIDs:     refFileIDs,
 		PassThrough:    passThrough,
 	}, nil
 }

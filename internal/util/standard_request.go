@@ -14,6 +14,7 @@ type StandardRequest struct {
 	Stream         bool
 	Thinking       bool
 	Search         bool
+	RefFileIDs     []string
 	PassThrough    map[string]any
 }
 
@@ -61,12 +62,19 @@ func (r StandardRequest) CompletionPayload(sessionID string) map[string]any {
 	if resolvedType, ok := config.GetModelType(modelID); ok {
 		modelType = resolvedType
 	}
+	refFileIDs := make([]any, 0, len(r.RefFileIDs))
+	for _, fileID := range r.RefFileIDs {
+		if fileID == "" {
+			continue
+		}
+		refFileIDs = append(refFileIDs, fileID)
+	}
 	payload := map[string]any{
 		"chat_session_id":   sessionID,
 		"model_type":        modelType,
 		"parent_message_id": nil,
 		"prompt":            r.FinalPrompt,
-		"ref_file_ids":      []any{},
+		"ref_file_ids":      refFileIDs,
 		"thinking_enabled":  r.Thinking,
 		"search_enabled":    r.Search,
 	}

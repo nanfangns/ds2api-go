@@ -173,7 +173,7 @@ Gemini-compatible clients can also send `x-goog-api-key`, `?key=`, or `?api_key=
 
 ### `GET /v1/models`
 
-No auth required. Returns supported models.
+No auth required. Returns the currently supported DeepSeek native model list.
 
 **Response**:
 
@@ -184,10 +184,20 @@ No auth required. Returns supported models.
     {"id": "deepseek-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
     {"id": "deepseek-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
+    {"id": "deepseek-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-expert-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-chat", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-reasoner", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-chat-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
+    {"id": "deepseek-vision-reasoner-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
   ]
 }
 ```
+
+> Note: `/v1/models` returns normalized DeepSeek native model IDs. Common aliases are accepted only as request input and are not expanded as separate items in this endpoint.
 
 ### Model Alias Resolution
 
@@ -211,7 +221,7 @@ Content-Type: application/json
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | DeepSeek native models + common aliases (`gpt-4o`, `gpt-5-codex`, `o3`, `claude-sonnet-4-5`, etc.) |
+| `model` | string | ✅ | DeepSeek native models + common aliases (`gpt-4o`, `gpt-5-codex`, `o3`, `claude-sonnet-4-5`, `gemini-2.5-pro`, etc.) |
 | `messages` | array | ✅ | OpenAI-style messages |
 | `stream` | boolean | ❌ | Default `false` |
 | `tools` | array | ❌ | Function calling schema |
@@ -408,7 +418,7 @@ No auth required.
 }
 ```
 
-> Note: the example is partial; the real response includes historical Claude 1.x/2.x/3.x/4.x IDs and common aliases.
+> Note: the example is partial; besides the current primary aliases, the real response also includes Claude 4.x snapshots plus historical 3.x / 2.x / 1.x IDs and common aliases.
 
 ### `POST /anthropic/v1/messages`
 

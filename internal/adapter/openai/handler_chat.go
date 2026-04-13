@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"ds2api/internal/auth"
@@ -43,9 +44,18 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 
 	r = r.WithContext(auth.WithAuth(r.Context(), a))
 
+	r.Body = http.MaxBytesReader(w, r.Body, openAIGeneralMaxSize)
 	var req map[string]any
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "too large") {
+			writeOpenAIError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
 		writeOpenAIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := h.preprocessInlineFileInputs(r.Context(), a, req); err != nil {
+		writeOpenAIInlineFileError(w, err)
 		return
 	}
 	stdReq, err := normalizeOpenAIChatRequest(h.Store, req, requestTraceID(r))
@@ -127,7 +137,7 @@ func (h *Handler) handleNonStream(w http.ResponseWriter, ctx context.Context, re
 	stripReferenceMarkers := h.compatStripReferenceMarkers()
 	finalThinking := cleanVisibleOutput(result.Thinking, stripReferenceMarkers)
 	finalText := cleanVisibleOutput(result.Text, stripReferenceMarkers)
-	if writeUpstreamEmptyOutputError(w, finalThinking, finalText, result.ContentFilter) {
+	if writeUpstreamEmptyOutputError(w, finalText, result.ContentFilter) {
 		return
 	}
 	respBody := openaifmt.BuildChatCompletion(completionID, model, finalPrompt, finalThinking, finalText, toolNames)

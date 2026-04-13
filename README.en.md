@@ -118,26 +118,35 @@ For the full module-by-module architecture and directory responsibilities, see [
 
 ## Model Support
 
-### OpenAI Endpoint
+### OpenAI Endpoint (`GET /v1/models`)
 
-| Model | thinking | search |
-| --- | --- | --- |
-| `deepseek-chat` | ❌ | ❌ |
-| `deepseek-reasoner` | ✅ | ❌ |
-| `deepseek-chat-search` | ❌ | ✅ |
-| `deepseek-reasoner-search` | ✅ | ✅ |
+| Family | Model ID | thinking | search |
+| --- | --- | --- | --- |
+| default | `deepseek-chat` | ❌ | ❌ |
+| default | `deepseek-reasoner` | ✅ | ❌ |
+| default | `deepseek-chat-search` | ❌ | ✅ |
+| default | `deepseek-reasoner-search` | ✅ | ✅ |
+| expert | `deepseek-expert-chat` | ❌ | ❌ |
+| expert | `deepseek-expert-reasoner` | ✅ | ❌ |
+| expert | `deepseek-expert-chat-search` | ❌ | ✅ |
+| expert | `deepseek-expert-reasoner-search` | ✅ | ✅ |
+| vision | `deepseek-vision-chat` | ❌ | ❌ |
+| vision | `deepseek-vision-reasoner` | ✅ | ❌ |
+| vision | `deepseek-vision-chat-search` | ❌ | ✅ |
+| vision | `deepseek-vision-reasoner-search` | ✅ | ✅ |
 
-### Claude Endpoint
+Besides native IDs, DS2API also accepts common aliases as input (for example `gpt-4o`, `gpt-5-codex`, `o3`, `claude-sonnet-4-5`, `gemini-2.5-pro`), but `/v1/models` returns normalized DeepSeek native model IDs.
 
-| Model | Default Mapping |
+### Claude Endpoint (`GET /anthropic/v1/models`)
+
+| Current common model | Default Mapping |
 | --- | --- |
 | `claude-sonnet-4-5` | `deepseek-chat` |
 | `claude-haiku-4-5` (compatible with `claude-3-5-haiku-latest`) | `deepseek-chat` |
 | `claude-opus-4-6` | `deepseek-reasoner` |
 
 Override mapping via `claude_mapping` or `claude_model_mapping` in config.
-In addition, `/anthropic/v1/models` now includes historical Claude 1.x/2.x/3.x/4.x IDs and common aliases for legacy client compatibility.
-
+Besides the current primary aliases above, `/anthropic/v1/models` also returns Claude 4.x snapshots plus historical 3.x / 2.x / 1.x IDs and common aliases for legacy client compatibility.
 
 #### Claude Code integration pitfalls (validated)
 
@@ -152,6 +161,15 @@ The Gemini adapter maps model names to DeepSeek native models via `model_aliases
 
 ## Quick Start
 
+### Recommended deployment priority
+
+Recommended order when choosing a deployment method:
+
+1. **Download and run release binaries**: the easiest path for most users because the artifacts are already built.
+2. **Docker / GHCR image deployment**: suitable for containerized, orchestrated, or cloud environments.
+3. **Vercel deployment**: suitable if you already use Vercel and accept its platform constraints.
+4. **Run from source / build locally**: suitable for development, debugging, or when you need to modify the code yourself.
+
 ### Universal First Step (all deployment modes)
 
 Use `config.json` as the single source of truth (recommended):
@@ -165,47 +183,37 @@ Recommended per deployment mode:
 - Local run: read `config.json` directly
 - Docker / Vercel: generate Base64 from `config.json` and inject as `DS2API_CONFIG_JSON`, or paste raw JSON directly
 
-### Option 1: Local Run
+### Option 1: Download Release Binaries
 
-**Prerequisites**: Go 1.26+, Node.js `20.19+` or `22.12+` (only if building WebUI locally)
+GitHub Actions automatically builds multi-platform archives on each Release:
 
 ```bash
-# 1. Clone
-git clone https://github.com/CJackHwang/ds2api.git
-cd ds2api
-
-# 2. Configure
+# After downloading the archive for your platform
+tar -xzf ds2api_<tag>_linux_amd64.tar.gz
+cd ds2api_<tag>_linux_amd64
 cp config.example.json config.json
-# Edit config.json with your DeepSeek account info and API keys
-
-# 3. Start
-go run ./cmd/ds2api
+# Edit config.json
+./ds2api
 ```
 
-Default local URL: `http://127.0.0.1:5001`
-
-The server actually binds to `0.0.0.0:5001`, so devices on the same LAN can usually reach it through your private IP as well.
-
-> **WebUI auto-build**: On first local startup, if `static/admin` is missing, DS2API will auto-run `npm ci` (only when dependencies are missing) and `npm run build -- --outDir static/admin --emptyOutDir` (requires Node.js). You can also build manually: `./scripts/build-webui.sh`
-
-### Option 2: Docker
+### Option 2: Docker / GHCR
 
 ```bash
-# 1. Prepare env file and config file
+# Pull prebuilt image
+docker pull ghcr.io/cjackhwang/ds2api:latest
+
+# Or run a pinned version
+# docker pull ghcr.io/cjackhwang/ds2api:v3.0.0
+
+# Prepare env file and config file
 cp .env.example .env
 cp config.example.json config.json
 
-# 2. Edit .env (at least set DS2API_ADMIN_KEY; optionally set DS2API_HOST_PORT to change the host port)
-#    DS2API_ADMIN_KEY=replace-with-a-strong-secret
-
-# 3. Start
+# Start with compose
 docker-compose up -d
-
-# 4. View logs
-docker-compose logs -f
 ```
 
-The default `docker-compose.yml` maps host port `6011` to container port `5001`. If you want `5001` exposed directly, set `DS2API_HOST_PORT=5001` (or adjust the `ports` mapping).
+The default `docker-compose.yml` uses `ghcr.io/cjackhwang/ds2api:latest` and maps host port `6011` to container port `5001`. If you want `5001` exposed directly, set `DS2API_HOST_PORT=5001` (or adjust the `ports` mapping).
 
 Rebuild after updates: `docker-compose up -d --build`
 
@@ -241,35 +249,28 @@ base64 < config.json | tr -d '\n'
 
 For detailed deployment instructions, see the [Deployment Guide](docs/DEPLOY.en.md).
 
-### Option 4: Download Release Binaries
+### Option 4: Local Run
 
-GitHub Actions automatically builds multi-platform archives on each Release:
+**Prerequisites**: Go 1.26+, Node.js `20.19+` or `22.12+` (only if building WebUI locally)
 
 ```bash
-# After downloading the archive for your platform
-tar -xzf ds2api_<tag>_linux_amd64.tar.gz
-cd ds2api_<tag>_linux_amd64
+# 1. Clone
+git clone https://github.com/CJackHwang/ds2api.git
+cd ds2api
+
+# 2. Configure
 cp config.example.json config.json
-# Edit config.json
-./ds2api
+# Edit config.json with your DeepSeek account info and API keys
+
+# 3. Start
+go run ./cmd/ds2api
 ```
 
-### Option 5: OpenCode CLI
+Default local URL: `http://127.0.0.1:5001`
 
-1. Copy the example config:
+The server actually binds to `0.0.0.0:5001`, so devices on the same LAN can usually reach it through your private IP as well.
 
-```bash
-cp opencode.json.example opencode.json
-```
-
-2. Edit `opencode.json`:
-- Set `baseURL` to your DS2API endpoint (for example, `https://your-domain.com/v1`)
-- Set `apiKey` to your DS2API key (from `config.keys`)
-
-3. Start OpenCode CLI in the project directory (run `opencode` using your installed method).
-
-> Recommended: use the OpenAI-compatible path (`/v1/*`) via `@ai-sdk/openai-compatible` as shown in the example.
-> If your client supports `wire_api`, test both `responses` and `chat`; DS2API supports both paths.
+> **WebUI auto-build**: On first local startup, if `static/admin` is missing, DS2API will auto-run `npm ci` (only when dependencies are missing) and `npm run build -- --outDir static/admin --emptyOutDir` (requires Node.js). You can also build manually: `./scripts/build-webui.sh`
 
 ## Configuration
 

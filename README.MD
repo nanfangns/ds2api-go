@@ -120,26 +120,35 @@ flowchart LR
 
 ## 模型支持
 
-### OpenAI 接口
+### OpenAI 接口（`GET /v1/models`）
 
-| 模型 | thinking | search |
-| --- | --- | --- |
-| `deepseek-chat` | ❌ | ❌ |
-| `deepseek-reasoner` | ✅ | ❌ |
-| `deepseek-chat-search` | ❌ | ✅ |
-| `deepseek-reasoner-search` | ✅ | ✅ |
+| 模型类型 | 模型 ID | thinking | search |
+| --- | --- | --- | --- |
+| default | `deepseek-chat` | ❌ | ❌ |
+| default | `deepseek-reasoner` | ✅ | ❌ |
+| default | `deepseek-chat-search` | ❌ | ✅ |
+| default | `deepseek-reasoner-search` | ✅ | ✅ |
+| expert | `deepseek-expert-chat` | ❌ | ❌ |
+| expert | `deepseek-expert-reasoner` | ✅ | ❌ |
+| expert | `deepseek-expert-chat-search` | ❌ | ✅ |
+| expert | `deepseek-expert-reasoner-search` | ✅ | ✅ |
+| vision | `deepseek-vision-chat` | ❌ | ❌ |
+| vision | `deepseek-vision-reasoner` | ✅ | ❌ |
+| vision | `deepseek-vision-chat-search` | ❌ | ✅ |
+| vision | `deepseek-vision-reasoner-search` | ✅ | ✅ |
 
-### Claude 接口
+除原生模型外，也支持常见 alias 输入（如 `gpt-4o`、`gpt-5-codex`、`o3`、`claude-sonnet-4-5`、`gemini-2.5-pro` 等），但 `/v1/models` 返回的是规范化后的 DeepSeek 原生模型 ID。
 
-| 模型 | 默认映射 |
+### Claude 接口（`GET /anthropic/v1/models`）
+
+| 当前常用模型 | 默认映射 |
 | --- | --- |
 | `claude-sonnet-4-5` | `deepseek-chat` |
 | `claude-haiku-4-5`（兼容 `claude-3-5-haiku-latest`） | `deepseek-chat` |
 | `claude-opus-4-6` | `deepseek-reasoner` |
 
 可通过配置中的 `claude_mapping` 或 `claude_model_mapping` 覆盖映射关系。
-另外，`/anthropic/v1/models` 现已包含 Claude 1.x/2.x/3.x/4.x 历史模型 ID 与常见别名，便于旧客户端直接兼容。
-
+`/anthropic/v1/models` 除上述当前主别名外，还会返回 Claude 4.x snapshots，以及 3.x / 2.x / 1.x 历史模型 ID 与常见 alias，便于旧客户端直接兼容。
 
 #### Claude Code 接入避坑（实测）
 
@@ -154,6 +163,15 @@ Gemini 适配器将模型名通过 `model_aliases` 或内置规则映射到 Deep
 
 ## 快速开始
 
+### 部署方式优先级建议
+
+推荐按以下顺序选择部署方式：
+
+1. **下载 Release 构建包运行**：最省事，产物已编译完成，最适合大多数用户。
+2. **Docker / GHCR 镜像部署**：适合需要容器化、编排或云环境部署。
+3. **Vercel 部署**：适合已有 Vercel 环境且接受其平台约束的场景。
+4. **本地源码运行 / 自行编译**：适合开发、调试或需要自行修改代码的场景。
+
 ### 通用第一步（所有部署方式）
 
 把 `config.json` 作为唯一配置源（推荐做法）：
@@ -167,28 +185,18 @@ cp config.example.json config.json
 - 本地运行：直接读取 `config.json`
 - Docker / Vercel：由 `config.json` 生成 `DS2API_CONFIG_JSON`（Base64）注入环境变量，也可以直接写原始 JSON
 
-### 方式一：本地运行
+### 方式一：下载 Release 构建包
 
-**前置要求**：Go 1.26+，Node.js `20.19+` 或 `22.12+`（仅在需要构建 WebUI 时）
+每次发布 Release 时，GitHub Actions 会自动构建多平台二进制包：
 
 ```bash
-# 1. 克隆仓库
-git clone https://github.com/CJackHwang/ds2api.git
-cd ds2api
-
-# 2. 配置
+# 下载对应平台的压缩包后
+tar -xzf ds2api_<tag>_linux_amd64.tar.gz
+cd ds2api_<tag>_linux_amd64
 cp config.example.json config.json
-# 编辑 config.json，填入你的 DeepSeek 账号信息和 API key
-
-# 3. 启动
-go run ./cmd/ds2api
+# 编辑 config.json
+./ds2api
 ```
-
-默认本地访问地址：`http://127.0.0.1:5001`
-
-服务实际绑定：`0.0.0.0:5001`，因此同一局域网设备通常也可以通过你的内网 IP 访问。
-
-> **WebUI 自动构建**：本地首次启动时，若 `static/admin` 不存在，会自动尝试执行 `npm ci`（仅在缺少依赖时）和 `npm run build -- --outDir static/admin --emptyOutDir`（需要本机有 Node.js）。你也可以手动构建：`./scripts/build-webui.sh`
 
 ### 方式二：Docker 运行
 
@@ -243,35 +251,28 @@ base64 < config.json | tr -d '\n'
 
 详细部署说明请参阅 [部署指南](docs/DEPLOY.md)。
 
-### 方式四：下载 Release 构建包
+### 方式四：本地源码运行
 
-每次发布 Release 时，GitHub Actions 会自动构建多平台二进制包：
+**前置要求**：Go 1.26+，Node.js `20.19+` 或 `22.12+`（仅在需要构建 WebUI 时）
 
 ```bash
-# 下载对应平台的压缩包后
-tar -xzf ds2api_<tag>_linux_amd64.tar.gz
-cd ds2api_<tag>_linux_amd64
+# 1. 克隆仓库
+git clone https://github.com/CJackHwang/ds2api.git
+cd ds2api
+
+# 2. 配置
 cp config.example.json config.json
-# 编辑 config.json
-./ds2api
+# 编辑 config.json，填入你的 DeepSeek 账号信息和 API key
+
+# 3. 启动
+go run ./cmd/ds2api
 ```
 
-### 方式五：OpenCode CLI 接入
+默认本地访问地址：`http://127.0.0.1:5001`
 
-1. 复制示例配置：
+服务实际绑定：`0.0.0.0:5001`，因此同一局域网设备通常也可以通过你的内网 IP 访问。
 
-```bash
-cp opencode.json.example opencode.json
-```
-
-2. 编辑 `opencode.json`：
-- 将 `baseURL` 改为你的 DS2API 地址（例如 `https://your-domain.com/v1`）
-- 将 `apiKey` 改为你的 DS2API key（对应 `config.keys`）
-
-3. 在项目目录启动 OpenCode CLI（按你的安装方式运行 `opencode`）。
-
-> 建议优先使用 OpenAI 兼容路径（`/v1/*`），即示例里的 `@ai-sdk/openai-compatible` provider。
-> 若客户端支持 `wire_api`，可分别测试 `responses` 与 `chat`，DS2API 两条链路都兼容。
+> **WebUI 自动构建**：本地首次启动时，若 `static/admin` 不存在，会自动尝试执行 `npm ci`（仅在缺少依赖时）和 `npm run build -- --outDir static/admin --emptyOutDir`（需要本机有 Node.js）。你也可以手动构建：`./scripts/build-webui.sh`
 
 ## 配置说明
 

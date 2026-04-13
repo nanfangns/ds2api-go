@@ -518,6 +518,44 @@ func TestHandleResponsesStreamRequiredMalformedToolPayloadFails(t *testing.T) {
 	}
 }
 
+func TestHandleResponsesStreamFailsWhenUpstreamHasOnlyThinking(t *testing.T) {
+	h := &Handler{}
+	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	rec := httptest.NewRecorder()
+
+	sseLine := func(path, value string) string {
+		b, _ := json.Marshal(map[string]any{
+			"p": path,
+			"v": value,
+		})
+		return "data: " + string(b) + "\n"
+	}
+
+	streamBody := sseLine("response/thinking_content", "Only thinking") + "data: [DONE]\n"
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(streamBody)),
+	}
+
+	h.handleResponsesStream(rec, req, resp, "owner-a", "resp_test", "deepseek-reasoner", "prompt", true, false, nil, util.DefaultToolChoicePolicy(), "")
+
+	body := rec.Body.String()
+	if !strings.Contains(body, "event: response.failed") {
+		t.Fatalf("expected response.failed event, body=%s", body)
+	}
+	if strings.Contains(body, "event: response.completed") {
+		t.Fatalf("did not expect response.completed, body=%s", body)
+	}
+	payload, ok := extractSSEEventPayload(body, "response.failed")
+	if !ok {
+		t.Fatalf("expected response.failed payload, body=%s", body)
+	}
+	errObj, _ := payload["error"].(map[string]any)
+	if asString(errObj["code"]) != "upstream_empty_output" {
+		t.Fatalf("expected code=upstream_empty_output, got %#v", payload)
+	}
+}
+
 func TestHandleResponsesStreamAllowsUnknownToolName(t *testing.T) {
 	h := &Handler{}
 	req := httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
@@ -668,6 +706,28 @@ func TestHandleResponsesNonStreamReturnsContentFilterErrorWhenUpstreamFilteredWi
 	errObj, _ := out["error"].(map[string]any)
 	if asString(errObj["code"]) != "content_filter" {
 		t.Fatalf("expected code=content_filter, got %#v", out)
+	}
+}
+
+func TestHandleResponsesNonStreamReturns429WhenUpstreamHasOnlyThinking(t *testing.T) {
+	h := &Handler{}
+	rec := httptest.NewRecorder()
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			`data: {"p":"response/thinking_content","v":"Only thinking"}` + "\n" +
+				`data: [DONE]` + "\n",
+		)),
+	}
+
+	h.handleResponsesNonStream(rec, resp, "owner-a", "resp_test", "deepseek-reasoner", "prompt", true, nil, util.DefaultToolChoicePolicy(), "")
+	if rec.Code != http.StatusTooManyRequests {
+		t.Fatalf("expected 429 for thinking-only upstream output, got %d body=%s", rec.Code, rec.Body.String())
+	}
+	out := decodeJSONBody(t, rec.Body.String())
+	errObj, _ := out["error"].(map[string]any)
+	if asString(errObj["code"]) != "upstream_empty_output" {
+		t.Fatalf("expected code=upstream_empty_output, got %#v", out)
 	}
 }
 

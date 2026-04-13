@@ -98,6 +98,19 @@ func (s *chatStreamRuntime) sendDone() {
 	}
 }
 
+func (s *chatStreamRuntime) sendFailedChunk(status int, message, code string) {
+	s.sendChunk(map[string]any{
+		"status_code": status,
+		"error": map[string]any{
+			"message": message,
+			"type":    openAIErrorType(status),
+			"code":    code,
+			"param":   nil,
+		},
+	})
+	s.sendDone()
+}
+
 func (s *chatStreamRuntime) finalize(finishReason string) {
 	finalThinking := s.thinking.String()
 	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
@@ -168,6 +181,21 @@ func (s *chatStreamRuntime) finalize(finishReason string) {
 	if len(detected.Calls) > 0 || s.toolCallsEmitted {
 		finishReason = "tool_calls"
 	}
+	if len(detected.Calls) == 0 && !s.toolCallsEmitted && strings.TrimSpace(finalText) == "" {
+		status := http.StatusTooManyRequests
+		message := "Upstream model returned empty output."
+		code := "upstream_empty_output"
+		if strings.TrimSpace(finalThinking) != "" {
+			message = "Upstream model returned reasoning without visible output."
+		}
+		if finishReason == "content_filter" {
+			status = http.StatusBadRequest
+			message = "Upstream content filtered the response and returned no output."
+			code = "content_filter"
+		}
+		s.sendFailedChunk(status, message, code)
+		return
+	}
 	usage := openaifmt.BuildChatUsage(s.finalPrompt, finalThinking, finalText)
 	s.sendChunk(openaifmt.BuildChatStreamChunk(
 		s.completionID,
@@ -184,6 +212,9 @@ func (s *chatStreamRuntime) onParsed(parsed sse.LineResult) streamengine.ParsedD
 		return streamengine.ParsedDecision{}
 	}
 	if parsed.ContentFilter {
+		if strings.TrimSpace(s.text.String()) == "" {
+			return streamengine.ParsedDecision{Stop: true, StopReason: streamengine.StopReason("content_filter")}
+		}
 		return streamengine.ParsedDecision{Stop: true, StopReason: streamengine.StopReasonHandlerRequested}
 	}
 	if parsed.ErrorMessage != "" {
