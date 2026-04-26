@@ -8,29 +8,37 @@ import (
 )
 
 type Config struct {
-	Keys             []string          `json:"keys,omitempty"`
-	Accounts         []Account         `json:"accounts,omitempty"`
-	Proxies          []Proxy           `json:"proxies,omitempty"`
-	ClaudeMapping    map[string]string `json:"claude_mapping,omitempty"`
-	ClaudeModelMap   map[string]string `json:"claude_model_mapping,omitempty"`
-	ModelAliases     map[string]string `json:"model_aliases,omitempty"`
-	Admin            AdminConfig       `json:"admin,omitempty"`
-	Runtime          RuntimeConfig     `json:"runtime,omitempty"`
-	Compat           CompatConfig      `json:"compat,omitempty"`
-	Responses        ResponsesConfig   `json:"responses,omitempty"`
-	Embeddings       EmbeddingsConfig  `json:"embeddings,omitempty"`
-	AutoDelete       AutoDeleteConfig  `json:"auto_delete"`
-	VercelSyncHash   string            `json:"_vercel_sync_hash,omitempty"`
-	VercelSyncTime   int64             `json:"_vercel_sync_time,omitempty"`
-	AdditionalFields map[string]any    `json:"-"`
+	Keys             []string           `json:"keys,omitempty"`
+	APIKeys          []APIKey           `json:"api_keys,omitempty"`
+	Accounts         []Account          `json:"accounts,omitempty"`
+	Proxies          []Proxy            `json:"proxies,omitempty"`
+	ModelAliases     map[string]string  `json:"model_aliases,omitempty"`
+	Admin            AdminConfig        `json:"admin,omitempty"`
+	Runtime          RuntimeConfig      `json:"runtime,omitempty"`
+	Compat           CompatConfig       `json:"compat,omitempty"`
+	Responses        ResponsesConfig    `json:"responses,omitempty"`
+	Embeddings       EmbeddingsConfig   `json:"embeddings,omitempty"`
+	AutoDelete       AutoDeleteConfig   `json:"auto_delete"`
+	HistorySplit     HistorySplitConfig `json:"history_split"`
+	VercelSyncHash   string             `json:"_vercel_sync_hash,omitempty"`
+	VercelSyncTime   int64              `json:"_vercel_sync_time,omitempty"`
+	AdditionalFields map[string]any     `json:"-"`
 }
 
 type Account struct {
+	Name     string `json:"name,omitempty"`
+	Remark   string `json:"remark,omitempty"`
 	Email    string `json:"email,omitempty"`
 	Mobile   string `json:"mobile,omitempty"`
 	Password string `json:"password,omitempty"`
 	Token    string `json:"token,omitempty"`
 	ProxyID  string `json:"proxy_id,omitempty"`
+}
+
+type APIKey struct {
+	Key    string `json:"key"`
+	Name   string `json:"name,omitempty"`
+	Remark string `json:"remark,omitempty"`
 }
 
 type Proxy struct {
@@ -73,6 +81,28 @@ func (c *Config) ClearAccountTokens() {
 	}
 }
 
+func (c *Config) NormalizeCredentials() {
+	if c == nil {
+		return
+	}
+	normalizedAPIKeys := normalizeAPIKeys(c.APIKeys)
+	if len(normalizedAPIKeys) > 0 {
+		c.APIKeys = normalizedAPIKeys
+		c.Keys = apiKeysToStrings(c.APIKeys)
+	} else {
+		c.Keys = normalizeKeys(c.Keys)
+		c.APIKeys = apiKeysFromStrings(c.Keys, nil)
+	}
+
+	for i := range c.Accounts {
+		c.Accounts[i].Name = strings.TrimSpace(c.Accounts[i].Name)
+		c.Accounts[i].Remark = strings.TrimSpace(c.Accounts[i].Remark)
+	}
+
+	c.normalizeModelAliases()
+	c.forceHistorySplitEnabled()
+}
+
 // DropInvalidAccounts removes accounts that cannot be addressed by admin APIs
 // (no email and no normalizable mobile). This prevents legacy token-only
 // records from becoming orphaned empty entries after token stripping.
@@ -88,6 +118,35 @@ func (c *Config) DropInvalidAccounts() {
 		kept = append(kept, acc)
 	}
 	c.Accounts = kept
+}
+
+func (c *Config) normalizeModelAliases() {
+	if c == nil {
+		return
+	}
+
+	aliases := map[string]string{}
+	for k, v := range c.ModelAliases {
+		key := strings.TrimSpace(lower(k))
+		val := strings.TrimSpace(lower(v))
+		if key == "" || val == "" {
+			continue
+		}
+		aliases[key] = val
+	}
+	if len(aliases) == 0 {
+		c.ModelAliases = nil
+	} else {
+		c.ModelAliases = aliases
+	}
+}
+
+func (c *Config) forceHistorySplitEnabled() {
+	if c == nil {
+		return
+	}
+	enabled := true
+	c.HistorySplit.Enabled = &enabled
 }
 
 type CompatConfig struct {
@@ -119,4 +178,9 @@ type EmbeddingsConfig struct {
 type AutoDeleteConfig struct {
 	Mode     string `json:"mode,omitempty"`
 	Sessions bool   `json:"sessions,omitempty"`
+}
+
+type HistorySplitConfig struct {
+	Enabled           *bool `json:"enabled,omitempty"`
+	TriggerAfterTurns *int  `json:"trigger_after_turns,omitempty"`
 }

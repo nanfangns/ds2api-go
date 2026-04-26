@@ -18,6 +18,7 @@ const {
   normalizePreparedToolNames,
   boolDefaultTrue,
   filterIncrementalToolCallDeltasByAllowed,
+  resetStreamToolCallState,
 } = require('./toolcall_policy');
 const {
   estimateTokens,
@@ -39,7 +40,7 @@ const {
 } = require('./dedupe');
 
 async function handler(req, res) {
-  setCorsHeaders(res);
+  setCorsHeaders(res, req);
   if (req.method === 'OPTIONS') {
     res.statusCode = 204;
     res.end();
@@ -115,6 +116,7 @@ module.exports.__test = {
   normalizePreparedToolNames,
   boolDefaultTrue,
   filterIncrementalToolCallDeltasByAllowed,
+  resetStreamToolCallState,
   estimateTokens,
   buildUsage,
   filterLeakedContentFilterParts,

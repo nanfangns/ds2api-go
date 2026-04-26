@@ -10,7 +10,7 @@ const {
   formatOpenAIStreamToolCalls,
 } = require('../helpers/stream-tool-sieve');
 const { BASE_HEADERS } = require('../shared/deepseek-constants');
-const { writeOpenAIError } = require('./error_shape');
+const { writeOpenAIError, openAIErrorType } = require('./error_shape');
 const { parseChunkForContent, isCitation } = require('./sse_parse');
 const { buildUsage } = require('./token_usage');
 const {
@@ -18,6 +18,7 @@ const {
   formatIncrementalToolCallDeltas,
   filterIncrementalToolCallDeltasByAllowed,
   boolDefaultTrue,
+  resetStreamToolCallState,
 } = require('./toolcall_policy');
 const { createChatCompletionEmitter } = require('./stream_emitter');
 const {
@@ -128,6 +129,7 @@ async function handleVercelStream(req, res, rawBody, payload) {
     const toolSieveEnabled = toolPolicy.toolSieveEnabled;
     const toolSieveState = createToolSieveState();
     let toolCallsEmitted = false;
+    let toolCallsDoneEmitted = false;
     const streamToolCallIDs = new Map();
     const streamToolNames = new Map();
     const decoder = new TextDecoder();
@@ -152,15 +154,18 @@ async function handleVercelStream(req, res, rawBody, payload) {
         return;
       }
       const detected = parseStandaloneToolCalls(outputText, toolNames);
-      if (detected.length > 0 && !toolCallsEmitted) {
+      if (detected.length > 0 && !toolCallsDoneEmitted) {
         toolCallsEmitted = true;
+        toolCallsDoneEmitted = true;
         sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(detected, streamToolCallIDs) });
       } else if (toolSieveEnabled) {
         const tailEvents = flushToolSieve(toolSieveState, toolNames);
         for (const evt of tailEvents) {
           if (evt.type === 'tool_calls' && Array.isArray(evt.calls) && evt.calls.length > 0) {
             toolCallsEmitted = true;
+            toolCallsDoneEmitted = true;
             sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(evt.calls, streamToolCallIDs) });
+            resetStreamToolCallState(streamToolCallIDs, streamToolNames);
             continue;
           }
           if (evt.text) {
@@ -170,6 +175,15 @@ async function handleVercelStream(req, res, rawBody, payload) {
       }
       if (detected.length > 0 || toolCallsEmitted) {
         reason = 'tool_calls';
+      }
+      if (detected.length === 0 && !toolCallsEmitted && outputText.trim() === '') {
+        const detail = upstreamEmptyOutputDetail(reason === 'content_filter', outputText, thinkingText);
+        sendFailedChunk(res, detail.status, detail.message, detail.code);
+        await releaseLease();
+        if (!res.writableEnded && !res.destroyed) {
+          res.end();
+        }
+        return;
       }
       sendFrame({
         id: sessionID,
@@ -232,7 +246,7 @@ async function handleVercelStream(req, res, rawBody, payload) {
             return;
           }
           if (parsed.contentFilter) {
-            await finish('stop');
+            await finish(outputText.trim() === '' ? 'content_filter' : 'stop');
             return;
           }
           if (parsed.finished) {
@@ -282,7 +296,9 @@ async function handleVercelStream(req, res, rawBody, payload) {
                 }
                 if (evt.type === 'tool_calls') {
                   toolCallsEmitted = true;
+                  toolCallsDoneEmitted = true;
                   sendDeltaFrame({ tool_calls: formatOpenAIStreamToolCalls(evt.calls, streamToolCallIDs) });
+                  resetStreamToolCallState(streamToolCallIDs, streamToolNames);
                   continue;
                 }
                 if (evt.text) {
@@ -310,6 +326,46 @@ async function handleVercelStream(req, res, rawBody, payload) {
 
 function toBool(v) {
   return v === true;
+}
+
+function upstreamEmptyOutputDetail(contentFilter, _text, thinking) {
+  if (contentFilter) {
+    return {
+      status: 400,
+      message: 'Upstream content filtered the response and returned no output.',
+      code: 'content_filter',
+    };
+  }
+  if (thinking !== '') {
+    return {
+      status: 429,
+      message: 'Upstream account hit a rate limit and returned reasoning without visible output.',
+      code: 'upstream_empty_output',
+    };
+  }
+  return {
+    status: 429,
+    message: 'Upstream account hit a rate limit and returned empty output.',
+    code: 'upstream_empty_output',
+  };
+}
+
+function sendFailedChunk(res, status, message, code) {
+  res.write(`data: ${JSON.stringify({
+    status_code: status,
+    error: {
+      message,
+      type: openAIErrorType(status),
+      code,
+      param: null,
+    },
+  })}\n\n`);
+  if (!res.writableEnded && !res.destroyed) {
+    res.write('data: [DONE]\n\n');
+  }
+  if (typeof res.flush === 'function') {
+    res.flush();
+  }
 }
 
 module.exports = {

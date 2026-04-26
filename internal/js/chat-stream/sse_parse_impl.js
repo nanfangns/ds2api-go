@@ -7,6 +7,74 @@ const {
   SKIP_EXACT_PATHS,
 } = require('../shared/deepseek-constants');
 
+
+
+function stripThinkTags(text) {
+  if (typeof text !== 'string' || !text) {
+    return text;
+  }
+  return text.replace(/<\/?\s*think\s*>/gi, '');
+}
+
+function splitThinkingParts(parts) {
+  const out = [];
+  let thinkingDone = false;
+  for (const p of parts) {
+    if (!p) continue;
+    if (thinkingDone && p.type === 'thinking') {
+      const cleaned = stripThinkTags(p.text);
+      if (cleaned) {
+        out.push({ text: cleaned, type: 'text' });
+      }
+      continue;
+    }
+    if (p.type !== 'thinking') {
+      const cleaned = stripThinkTags(p.text);
+      if (cleaned) {
+        out.push({ text: cleaned, type: p.type });
+      }
+      continue;
+    }
+    const match = /<\/\s*think\s*>/i.exec(p.text);
+    if (!match) {
+      out.push(p);
+      continue;
+    }
+    thinkingDone = true;
+    const before = p.text.substring(0, match.index);
+    let after = p.text.substring(match.index + match[0].length);
+    if (before) {
+      out.push({ text: before, type: 'thinking' });
+    }
+    after = stripThinkTags(after);
+    if (after) {
+      out.push({ text: after, type: 'text' });
+    }
+  }
+  return { parts: out, transitioned: thinkingDone };
+}
+
+function dropThinkingParts(parts) {
+  if (!Array.isArray(parts) || parts.length === 0) {
+    return parts;
+  }
+  return parts.filter((p) => p && p.type !== 'thinking');
+}
+
+function finalizeThinkingParts(parts, thinkingEnabled, newType) {
+  const splitResult = splitThinkingParts(parts);
+  let finalType = newType;
+  let finalParts = splitResult.parts;
+  if (splitResult.transitioned) {
+    finalType = 'text';
+  }
+  if (!thinkingEnabled) {
+    finalParts = dropThinkingParts(finalParts);
+    finalType = 'text';
+  }
+  return { parts: finalParts, newType: finalType };
+}
+
 function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenceMarkers = true) {
   if (!chunk || typeof chunk !== 'object') {
     return {
@@ -147,7 +215,13 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
 
   let partType = 'text';
   if (pathValue === 'response/thinking_content') {
-    partType = 'thinking';
+    if (!thinkingEnabled) {
+      partType = 'thinking';
+    } else if (newType === 'text') {
+      partType = 'text';
+    } else {
+      partType = 'thinking';
+    }
   } else if (pathValue === 'response/content') {
     partType = 'text';
   } else if (pathValue.includes('response/fragments') && pathValue.includes('/content')) {
@@ -186,15 +260,19 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
     if (content) {
       parts.push({ text: content, type: partType });
     }
+    
+    let resolvedParts = filterLeakedContentFilterParts(parts);
+    const finalized = finalizeThinkingParts(resolvedParts, thinkingEnabled, newType);
+    
     return {
       parsed: true,
-      parts: filterLeakedContentFilterParts(parts),
+      parts: finalized.parts,
       finished: false,
       contentFilter: false,
       errorMessage: '',
       promptTokens,
       outputTokens,
-      newType,
+      newType: finalized.newType,
     };
   }
 
@@ -213,15 +291,19 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
       };
     }
     parts.push(...extracted.parts);
+    
+    let resolvedParts = filterLeakedContentFilterParts(parts);
+    const finalized = finalizeThinkingParts(resolvedParts, thinkingEnabled, newType);
+    
     return {
       parsed: true,
-      parts: filterLeakedContentFilterParts(parts),
+      parts: finalized.parts,
       finished: false,
       contentFilter: false,
       errorMessage: '',
       promptTokens,
       outputTokens,
-      newType,
+      newType: finalized.newType,
     };
   }
 
@@ -249,15 +331,19 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
       }
     }
   }
+  
+  let resolvedParts = filterLeakedContentFilterParts(parts);
+  const finalized = finalizeThinkingParts(resolvedParts, thinkingEnabled, newType);
+
   return {
     parsed: true,
-    parts: filterLeakedContentFilterParts(parts),
+    parts: finalized.parts,
     finished: false,
     contentFilter: false,
     errorMessage: '',
     promptTokens,
     outputTokens,
-    newType,
+    newType: finalized.newType,
   };
 }
 
@@ -546,4 +632,5 @@ module.exports = {
   isFragmentStatusPath,
   isCitation,
   stripReferenceMarkers: stripReferenceMarkersText,
+  stripThinkTags,
 };

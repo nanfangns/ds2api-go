@@ -6,18 +6,6 @@ import (
 	"strings"
 )
 
-func (s *Store) ClaudeMapping() map[string]string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	if len(s.cfg.ClaudeModelMap) > 0 {
-		return cloneStringMap(s.cfg.ClaudeModelMap)
-	}
-	if len(s.cfg.ClaudeMapping) > 0 {
-		return cloneStringMap(s.cfg.ClaudeMapping)
-	}
-	return map[string]string{"fast": "deepseek-chat", "slow": "deepseek-reasoner"}
-}
-
 func (s *Store) ModelAliases() map[string]string {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
@@ -173,4 +161,17 @@ func (s *Store) RuntimeTokenRefreshIntervalHours() int {
 
 func (s *Store) AutoDeleteSessions() bool {
 	return s.AutoDeleteMode() != "none"
+}
+
+func (s *Store) HistorySplitEnabled() bool {
+	return true
+}
+
+func (s *Store) HistorySplitTriggerAfterTurns() int {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.HistorySplit.TriggerAfterTurns == nil || *s.cfg.HistorySplit.TriggerAfterTurns <= 0 {
+		return 1
+	}
+	return *s.cfg.HistorySplit.TriggerAfterTurns
 }

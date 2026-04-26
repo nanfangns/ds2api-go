@@ -12,7 +12,7 @@ func TestMessagesPrepareBasic(t *testing.T) {
 	if got == "" {
 		t.Fatal("expected non-empty prompt")
 	}
-	if got != "<｜begin▁of▁sentence｜>\n\n<｜User｜>\nHello<｜end▁of▁sentence｜>\n\n<｜Assistant｜></think>" {
+	if got != "<｜begin▁of▁sentence｜><｜User｜>Hello<｜Assistant｜>" {
 		t.Fatalf("unexpected prompt: %q", got)
 	}
 }
@@ -26,19 +26,19 @@ func TestMessagesPrepareRoles(t *testing.T) {
 		{"role": "user", "content": "How are you"},
 	}
 	got := MessagesPrepare(messages)
-	if !contains(got, "<｜System｜>\nYou are helper<｜end▁of▁instructions｜>\n\n<｜User｜>\nHi<｜end▁of▁sentence｜>") {
+	if !contains(got, "<｜System｜>You are helper<｜end▁of▁instructions｜><｜User｜>Hi") {
 		t.Fatalf("expected system/user separation in %q", got)
 	}
 	if !contains(got, "<｜begin▁of▁sentence｜>") {
 		t.Fatalf("expected begin marker in %q", got)
 	}
-	if !contains(got, "<｜User｜>\nHi<｜end▁of▁sentence｜>\n\n<｜Assistant｜>\n</think>Hello<｜end▁of▁sentence｜>") {
+	if !contains(got, "<｜User｜>Hi<｜Assistant｜>Hello<｜end▁of▁sentence｜>") {
 		t.Fatalf("expected user/assistant separation in %q", got)
 	}
-	if !contains(got, "<｜Assistant｜>\n</think>Hello<｜end▁of▁sentence｜>\n\n<｜Tool｜>\nSearch results<｜end▁of▁toolresults｜>") {
+	if !contains(got, "<｜Assistant｜>Hello<｜end▁of▁sentence｜><｜Tool｜>Search results<｜end▁of▁toolresults｜>") {
 		t.Fatalf("expected assistant/tool separation in %q", got)
 	}
-	if !contains(got, "<｜Tool｜>\nSearch results<｜end▁of▁toolresults｜>\n\n<｜User｜>\nHow are you<｜end▁of▁sentence｜>") {
+	if !contains(got, "<｜Tool｜>Search results<｜end▁of▁toolresults｜><｜User｜>How are you") {
 		t.Fatalf("expected tool/user separation in %q", got)
 	}
 	if !contains(got, "<｜Assistant｜>") {
@@ -77,7 +77,7 @@ func TestMessagesPrepareArrayTextVariants(t *testing.T) {
 		},
 	}
 	got := MessagesPrepare(messages)
-	if got != "<｜begin▁of▁sentence｜>\n\n<｜User｜>\nline1\nline2<｜end▁of▁sentence｜>\n\n<｜Assistant｜></think>" {
+	if got != "<｜begin▁of▁sentence｜><｜User｜>line1\nline2<｜Assistant｜>" {
 		t.Fatalf("unexpected content from text variants: %q", got)
 	}
 }
@@ -101,6 +101,18 @@ func TestConvertClaudeToDeepSeek(t *testing.T) {
 	first, _ := msgs[0].(map[string]any)
 	if first["role"] != "system" {
 		t.Fatalf("expected first message system, got %#v", first)
+	}
+}
+
+func TestConvertClaudeToDeepSeekUsesGlobalAliasResolution(t *testing.T) {
+	store := config.LoadStore()
+	req := map[string]any{
+		"model":    "claude-3-5-sonnet-latest",
+		"messages": []any{map[string]any{"role": "user", "content": "Hi"}},
+	}
+	out := ConvertClaudeToDeepSeek(req, store)
+	if out["model"] != "deepseek-v4-flash" {
+		t.Fatalf("expected global alias resolution, got model=%q", out["model"])
 	}
 }
 

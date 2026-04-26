@@ -17,17 +17,14 @@ func (c Config) MarshalJSON() ([]byte, error) {
 	if len(c.Keys) > 0 {
 		m["keys"] = c.Keys
 	}
+	if len(c.APIKeys) > 0 {
+		m["api_keys"] = c.APIKeys
+	}
 	if len(c.Accounts) > 0 {
 		m["accounts"] = c.Accounts
 	}
 	if len(c.Proxies) > 0 {
 		m["proxies"] = c.Proxies
-	}
-	if len(c.ClaudeMapping) > 0 {
-		m["claude_mapping"] = c.ClaudeMapping
-	}
-	if len(c.ClaudeModelMap) > 0 {
-		m["claude_model_mapping"] = c.ClaudeModelMap
 	}
 	if len(c.ModelAliases) > 0 {
 		m["model_aliases"] = c.ModelAliases
@@ -48,6 +45,9 @@ func (c Config) MarshalJSON() ([]byte, error) {
 		m["embeddings"] = c.Embeddings
 	}
 	m["auto_delete"] = c.AutoDelete
+	if c.HistorySplit.Enabled != nil || c.HistorySplit.TriggerAfterTurns != nil {
+		m["history_split"] = c.HistorySplit
+	}
 	if c.VercelSyncHash != "" {
 		m["_vercel_sync_hash"] = c.VercelSyncHash
 	}
@@ -69,6 +69,10 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 			if err := json.Unmarshal(v, &c.Keys); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
 			}
+		case "api_keys":
+			if err := json.Unmarshal(v, &c.APIKeys); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "accounts":
 			if err := json.Unmarshal(v, &c.Accounts); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
@@ -78,13 +82,8 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 				return fmt.Errorf("invalid field %q: %w", k, err)
 			}
 		case "claude_mapping":
-			if err := json.Unmarshal(v, &c.ClaudeMapping); err != nil {
-				return fmt.Errorf("invalid field %q: %w", k, err)
-			}
 		case "claude_model_mapping":
-			if err := json.Unmarshal(v, &c.ClaudeModelMap); err != nil {
-				return fmt.Errorf("invalid field %q: %w", k, err)
-			}
+			// Removed legacy mapping fields are ignored instead of persisted.
 		case "model_aliases":
 			if err := json.Unmarshal(v, &c.ModelAliases); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
@@ -115,6 +114,10 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 			if err := json.Unmarshal(v, &c.AutoDelete); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
 			}
+		case "history_split":
+			if err := json.Unmarshal(v, &c.HistorySplit); err != nil {
+				return fmt.Errorf("invalid field %q: %w", k, err)
+			}
 		case "_vercel_sync_hash":
 			if err := json.Unmarshal(v, &c.VercelSyncHash); err != nil {
 				return fmt.Errorf("invalid field %q: %w", k, err)
@@ -130,26 +133,30 @@ func (c *Config) UnmarshalJSON(b []byte) error {
 			}
 		}
 	}
+	c.NormalizeCredentials()
 	return nil
 }
 
 func (c Config) Clone() Config {
 	clone := Config{
-		Keys:           slices.Clone(c.Keys),
-		Accounts:       slices.Clone(c.Accounts),
-		Proxies:        slices.Clone(c.Proxies),
-		ClaudeMapping:  cloneStringMap(c.ClaudeMapping),
-		ClaudeModelMap: cloneStringMap(c.ClaudeModelMap),
-		ModelAliases:   cloneStringMap(c.ModelAliases),
-		Admin:          c.Admin,
-		Runtime:        c.Runtime,
+		Keys:         slices.Clone(c.Keys),
+		APIKeys:      slices.Clone(c.APIKeys),
+		Accounts:     slices.Clone(c.Accounts),
+		Proxies:      slices.Clone(c.Proxies),
+		ModelAliases: cloneStringMap(c.ModelAliases),
+		Admin:        c.Admin,
+		Runtime:      c.Runtime,
 		Compat: CompatConfig{
 			WideInputStrictOutput: cloneBoolPtr(c.Compat.WideInputStrictOutput),
 			StripReferenceMarkers: cloneBoolPtr(c.Compat.StripReferenceMarkers),
 		},
-		Responses:        c.Responses,
-		Embeddings:       c.Embeddings,
-		AutoDelete:       c.AutoDelete,
+		Responses:  c.Responses,
+		Embeddings: c.Embeddings,
+		AutoDelete: c.AutoDelete,
+		HistorySplit: HistorySplitConfig{
+			Enabled:           cloneBoolPtr(c.HistorySplit.Enabled),
+			TriggerAfterTurns: cloneIntPtr(c.HistorySplit.TriggerAfterTurns),
+		},
 		VercelSyncHash:   c.VercelSyncHash,
 		VercelSyncTime:   c.VercelSyncTime,
 		AdditionalFields: map[string]any{},
@@ -172,6 +179,14 @@ func cloneStringMap(in map[string]string) map[string]string {
 }
 
 func cloneBoolPtr(in *bool) *bool {
+	if in == nil {
+		return nil
+	}
+	v := *in
+	return &v
+}
+
+func cloneIntPtr(in *int) *int {
 	if in == nil {
 		return nil
 	}

@@ -17,7 +17,7 @@ const DEFAULT_FORM = {
     responses: { store_ttl_seconds: 900 },
     embeddings: { provider: '' },
     auto_delete: { mode: 'none' },
-    claude_mapping_text: '{\n  "fast": "deepseek-chat",\n  "slow": "deepseek-reasoner"\n}',
+    history_split: { enabled: true, trigger_after_turns: 1 },
     model_aliases_text: '{}',
 }
 
@@ -70,7 +70,10 @@ function fromServerForm(data) {
         auto_delete: {
             mode: normalizeAutoDeleteMode(data.auto_delete),
         },
-        claude_mapping_text: JSON.stringify(data.claude_mapping || {}, null, 2),
+        history_split: {
+            enabled: true,
+            trigger_after_turns: Number(data.history_split?.trigger_after_turns || 1),
+        },
         model_aliases_text: JSON.stringify(data.model_aliases || {}, null, 2),
     }
 }
@@ -90,6 +93,10 @@ function toServerPayload(form) {
         responses: { store_ttl_seconds: Number(form.responses.store_ttl_seconds) },
         embeddings: { provider: String(form.embeddings.provider || '').trim() },
         auto_delete: { mode: normalizeAutoDeleteMode(form.auto_delete) },
+        history_split: {
+            enabled: true,
+            trigger_after_turns: Number(form.history_split?.trigger_after_turns || 1),
+        },
     }
 }
 
@@ -167,10 +174,8 @@ export function useSettingsForm({ apiFetch, t, onMessage, onRefresh, onForceLogo
     }, [loadSettings])
 
     const saveSettings = useCallback(async () => {
-        let claudeMapping = {}
         let modelAliases = {}
         try {
-            claudeMapping = parseJSONMap(form.claude_mapping_text, 'claude_mapping', t)
             modelAliases = parseJSONMap(form.model_aliases_text, 'model_aliases', t)
         } catch (e) {
             onMessage('error', e.message)
@@ -179,7 +184,6 @@ export function useSettingsForm({ apiFetch, t, onMessage, onRefresh, onForceLogo
 
         const payload = {
             ...toServerPayload(form),
-            claude_mapping: claudeMapping,
             model_aliases: modelAliases,
         }
 
