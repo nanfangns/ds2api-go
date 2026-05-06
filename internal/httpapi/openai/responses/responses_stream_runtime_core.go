@@ -1,13 +1,16 @@
 package responses
 
 import (
+	"ds2api/internal/assistantturn"
 	"ds2api/internal/toolcall"
 	"net/http"
 	"strings"
 
 	"ds2api/internal/config"
 	openaifmt "ds2api/internal/format/openai"
+	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
+	"ds2api/internal/responsehistory"
 	"ds2api/internal/sse"
 	streamengine "ds2api/internal/stream"
 	"ds2api/internal/toolstream"
@@ -36,33 +39,30 @@ type responsesStreamRuntime struct {
 	toolCallsEmitted     bool
 	toolCallsDoneEmitted bool
 
-	sieve                 toolstream.State
-	rawThinking           strings.Builder
-	thinking              strings.Builder
-	toolDetectionThinking strings.Builder
-	rawText               strings.Builder
-	text                  strings.Builder
-	visibleText           strings.Builder
-	responseMessageID     int
-	streamToolCallIDs     map[int]string
-	functionItemIDs       map[int]string
-	functionOutputIDs     map[int]int
-	functionArgs          map[int]string
-	functionDone          map[int]bool
-	functionAdded         map[int]bool
-	functionNames         map[int]string
-	messageItemID         string
-	messageOutputID       int
-	nextOutputID          int
-	messageAdded          bool
-	messagePartAdded      bool
-	sequence              int
-	failed                bool
-	finalErrorStatus      int
-	finalErrorMessage     string
-	finalErrorCode        string
+	sieve             toolstream.State
+	accumulator       shared.StreamAccumulator
+	visibleText       strings.Builder
+	responseMessageID int
+	streamToolCallIDs map[int]string
+	functionItemIDs   map[int]string
+	functionOutputIDs map[int]int
+	functionArgs      map[int]string
+	functionDone      map[int]bool
+	functionAdded     map[int]bool
+	functionNames     map[int]string
+	messageItemID     string
+	messageOutputID   int
+	nextOutputID      int
+	messageAdded      bool
+	messagePartAdded  bool
+	sequence          int
+	failed            bool
+	finalErrorStatus  int
+	finalErrorMessage string
+	finalErrorCode    string
 
 	persistResponse func(obj map[string]any)
+	history         *responsehistory.Session
 }
 
 func newResponsesStreamRuntime(
@@ -82,6 +82,7 @@ func newResponsesStreamRuntime(
 	toolChoice promptcompat.ToolChoicePolicy,
 	traceID string,
 	persistResponse func(obj map[string]any),
+	history *responsehistory.Session,
 ) *responsesStreamRuntime {
 	return &responsesStreamRuntime{
 		w:                     w,
@@ -108,6 +109,12 @@ func newResponsesStreamRuntime(
 		toolChoice:            toolChoice,
 		traceID:               traceID,
 		persistResponse:       persistResponse,
+		history:               history,
+		accumulator: shared.StreamAccumulator{
+			ThinkingEnabled:       thinkingEnabled,
+			SearchEnabled:         searchEnabled,
+			StripReferenceMarkers: stripReferenceMarkers,
+		},
 	}
 }
 
@@ -135,6 +142,9 @@ func (s *responsesStreamRuntime) failResponse(status int, message, code string) 
 	if s.persistResponse != nil {
 		s.persistResponse(failedResp)
 	}
+	if s.history != nil {
+		s.history.Error(status, message, code, responsehistory.ThinkingForArchive(s.accumulator.RawThinking.String(), s.accumulator.ToolDetectionThinking.String(), s.accumulator.Thinking.String()), responsehistory.TextForArchive(s.accumulator.RawText.String(), s.accumulator.Text.String()))
+	}
 	s.sendEvent("response.failed", openaifmt.BuildResponsesFailedPayload(s.responseID, s.model, status, message, code))
 	s.sendDone()
 }
@@ -155,11 +165,31 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 		s.processToolStreamEvents(toolstream.Flush(&s.sieve, s.toolNames), true, true)
 	}
 
-	finalThinking := s.thinking.String()
-	finalToolDetectionThinking := s.toolDetectionThinking.String()
-	finalText := cleanVisibleOutput(s.text.String(), s.stripReferenceMarkers)
-	textParsed := detectAssistantToolCalls(s.rawText.String(), finalText, s.rawThinking.String(), finalToolDetectionThinking, s.toolNames)
-	detected := textParsed.Calls
+	finalThinking := s.accumulator.Thinking.String()
+	finalToolDetectionThinking := s.accumulator.ToolDetectionThinking.String()
+	finalText := s.accumulator.Text.String()
+	turn := assistantturn.BuildTurnFromStreamSnapshot(assistantturn.StreamSnapshot{
+		RawText:               s.accumulator.RawText.String(),
+		VisibleText:           finalText,
+		RawThinking:           s.accumulator.RawThinking.String(),
+		VisibleThinking:       finalThinking,
+		DetectionThinking:     finalToolDetectionThinking,
+		ContentFilter:         finishReason == "content_filter",
+		ResponseMessageID:     s.responseMessageID,
+		AlreadyEmittedCalls:   s.toolCallsEmitted,
+		AlreadyEmittedToolRaw: s.toolCallsDoneEmitted,
+	}, assistantturn.BuildOptions{
+		Model:                 s.model,
+		Prompt:                s.finalPrompt,
+		RefFileTokens:         s.refFileTokens,
+		SearchEnabled:         s.searchEnabled,
+		StripReferenceMarkers: s.stripReferenceMarkers,
+		ToolNames:             s.toolNames,
+		ToolsRaw:              s.toolsRaw,
+		ToolChoice:            s.toolChoice,
+	})
+	textParsed := turn.ParsedToolCalls
+	detected := turn.ToolCalls
 	s.logToolPolicyRejections(textParsed)
 
 	if len(detected) > 0 {
@@ -171,12 +201,11 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 
 	s.closeMessageItem()
 
-	if s.toolChoice.IsRequired() && len(detected) == 0 {
-		s.failResponse(http.StatusUnprocessableEntity, "tool_choice requires at least one valid tool call.", "tool_choice_violation")
-		return true
-	}
-	if len(detected) == 0 && strings.TrimSpace(finalText) == "" {
-		status, message, code := upstreamEmptyOutputDetail(finishReason == "content_filter", finalText, finalThinking)
+	outcome := assistantturn.FinalizeTurn(turn, assistantturn.FinalizeOptions{
+		AlreadyEmittedToolCalls: s.toolCallsEmitted || s.toolCallsDoneEmitted,
+	})
+	if outcome.ShouldFail {
+		status, message, code := outcome.Error.Status, outcome.Error.Message, outcome.Error.Code
 		if deferEmptyOutput {
 			s.finalErrorStatus = status
 			s.finalErrorMessage = message
@@ -188,9 +217,18 @@ func (s *responsesStreamRuntime) finalize(finishReason string, deferEmptyOutput 
 	}
 	s.closeIncompleteFunctionItems()
 
-	obj := s.buildCompletedResponseObject(finalThinking, finalText, detected)
+	obj := s.buildCompletedResponseObject(turn.Thinking, turn.Text, detected)
 	if s.persistResponse != nil {
 		s.persistResponse(obj)
+	}
+	if s.history != nil {
+		s.history.Success(
+			http.StatusOK,
+			responsehistory.ThinkingForArchive(turn.RawThinking, turn.DetectionThinking, turn.Thinking),
+			responsehistory.TextForArchive(turn.RawText, turn.Text),
+			outcome.FinishReason,
+			assistantturn.OpenAIResponsesUsage(turn),
+		)
 	}
 	s.sendEvent("response.completed", openaifmt.BuildResponsesCompletedPayload(obj))
 	s.sendDone()
@@ -228,62 +266,33 @@ func (s *responsesStreamRuntime) onParsed(parsed sse.LineResult) streamengine.Pa
 		return streamengine.ParsedDecision{Stop: true}
 	}
 
-	contentSeen := false
 	batch := responsesDeltaBatch{runtime: s}
-	for _, p := range parsed.ToolDetectionThinkingParts {
-		trimmed := sse.TrimContinuationOverlap(s.toolDetectionThinking.String(), p.Text)
-		if trimmed != "" {
-			s.toolDetectionThinking.WriteString(trimmed)
-		}
-	}
-	for _, p := range parsed.Parts {
+	accumulated := s.accumulator.Apply(parsed)
+	for _, p := range accumulated.Parts {
 		if p.Type == "thinking" {
-			rawTrimmed := sse.TrimContinuationOverlap(s.rawThinking.String(), p.Text)
-			if rawTrimmed != "" {
-				s.rawThinking.WriteString(rawTrimmed)
-				contentSeen = true
-			}
-			if !s.thinkingEnabled {
-				continue
-			}
-			cleanedText := cleanVisibleOutput(rawTrimmed, s.stripReferenceMarkers)
-			if cleanedText == "" {
-				continue
-			}
-			trimmed := sse.TrimContinuationOverlap(s.thinking.String(), cleanedText)
-			if trimmed == "" {
-				continue
-			}
-			s.thinking.WriteString(trimmed)
-			batch.append("reasoning", trimmed)
+			batch.append("reasoning", p.VisibleText)
 			continue
 		}
-
-		rawTrimmed := sse.TrimContinuationOverlap(s.rawText.String(), p.Text)
-		if rawTrimmed == "" {
+		if p.RawText == "" {
 			continue
 		}
-		s.rawText.WriteString(rawTrimmed)
-		contentSeen = true
-		cleanedText := cleanVisibleOutput(rawTrimmed, s.stripReferenceMarkers)
-		if s.searchEnabled && sse.IsCitation(cleanedText) {
+		if p.CitationOnly {
 			continue
-		}
-		trimmed := sse.TrimContinuationOverlap(s.text.String(), cleanedText)
-		if trimmed != "" {
-			s.text.WriteString(trimmed)
 		}
 		if !s.bufferToolContent {
-			if trimmed == "" {
-				continue
-			}
-			batch.append("text", trimmed)
+			batch.append("text", p.VisibleText)
 			continue
 		}
 		batch.flush()
-		s.processToolStreamEvents(toolstream.ProcessChunk(&s.sieve, rawTrimmed, s.toolNames), true, true)
+		s.processToolStreamEvents(toolstream.ProcessChunk(&s.sieve, p.RawText, s.toolNames), true, true)
 	}
 
 	batch.flush()
-	return streamengine.ParsedDecision{ContentSeen: contentSeen}
+	if s.history != nil {
+		s.history.Progress(
+			responsehistory.ThinkingForArchive(s.accumulator.RawThinking.String(), s.accumulator.ToolDetectionThinking.String(), s.accumulator.Thinking.String()),
+			responsehistory.TextForArchive(s.accumulator.RawText.String(), s.accumulator.Text.String()),
+		)
+	}
+	return streamengine.ParsedDecision{ContentSeen: accumulated.ContentSeen}
 }
