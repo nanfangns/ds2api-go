@@ -25,6 +25,7 @@ export default function AccountsTable({
     onDeleteAccount,
     onDeleteAllSessions,
     onUpdateAccountProxy,
+    onResetPoolStatus,
     onPrevPage,
     onNextPage,
     onPageSizeChange,
@@ -114,7 +115,7 @@ export default function AccountsTable({
                                 <div className="flex items-center gap-3 min-w-0">
                                     <div className={clsx(
                                         "w-2 h-2 rounded-full shrink-0",
-                                        acc.test_status === 'failed' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
+                                        acc.pool_status || acc.test_status === 'failed' ? "bg-red-500 shadow-[0_0_8px_rgba(239,68,68,0.5)]" :
                                         isActive ? "bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" :
                                         runtimeUnknown ? "bg-blue-500 shadow-[0_0_8px_rgba(59,130,246,0.5)]" : "bg-amber-500"
                                     )} />
@@ -134,7 +135,8 @@ export default function AccountsTable({
                                             <div className="text-xs text-muted-foreground truncate mt-0.5">{acc.remark}</div>
                                         )}
                                         <div className="flex items-center gap-2 text-xs text-muted-foreground mt-0.5">
-                                            <span>{acc.test_status === 'failed' ? t('accountManager.testStatusFailed') : isActive ? t('accountManager.sessionActive') : runtimeUnknown ? t('accountManager.runtimeStatusUnknown') : t('accountManager.reauthRequired')}</span>
+                                            <span>{acc.pool_status ? t(`accountManager.poolStatus_${acc.pool_status}`) : acc.test_status === 'failed' ? t('accountManager.testStatusFailed') : isActive ? t('accountManager.sessionActive') : runtimeUnknown ? t('accountManager.runtimeStatusUnknown') : t('accountManager.reauthRequired')}</span>
+                                            {acc.pool_status === 'muted' && acc.mute_until > 0 && <span>{new Date(acc.mute_until * 1000).toLocaleString()}</span>}
                                             {acc.token_preview && (
                                                 <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-[10px]">
                                                     {acc.token_preview}
@@ -181,6 +183,10 @@ export default function AccountsTable({
                                             </option>
                                         ))}
                                     </select>
+                                    {acc.pool_status && <button
+                                        onClick={() => onResetPoolStatus(id)}
+                                        className="px-2 py-1 text-xs border border-border rounded-md hover:bg-secondary"
+                                    >{t('accountManager.poolReset')}</button>}
                                     <button
                                         onClick={() => onEditAccount(acc)}
                                         disabled={!id}

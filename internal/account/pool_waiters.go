@@ -1,11 +1,26 @@
 package account
 
+import "time"
+
 func (p *Pool) canQueueLocked(target string, exclude map[string]bool) bool {
 	if target != "" {
 		if exclude[target] {
 			return false
 		}
-		if _, ok := p.store.FindAccount(target); !ok {
+		if acc, ok := p.store.FindAccount(target); !ok || acc.EffectivePoolStatus(time.Now()) != "" {
+			return false
+		}
+	} else {
+		eligible := false
+		for _, id := range p.queue {
+			if !exclude[id] {
+				if acc, ok := p.store.FindAccount(id); ok && acc.EffectivePoolStatus(time.Now()) == "" {
+					eligible = true
+					break
+				}
+			}
+		}
+		if !eligible {
 			return false
 		}
 	}

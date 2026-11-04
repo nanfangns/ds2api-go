@@ -82,6 +82,10 @@ func (h *Handler) handleClaudeDirect(w http.ResponseWriter, r *http.Request) boo
 		return true
 	}
 	defer h.Auth.Release(a)
+	if gateErr := completionruntime.ContextGateError(norm.Standard, h.Store); gateErr != nil {
+		writeClaudeError(w, gateErr.Status, gateErr.Message)
+		return true
+	}
 	stdReq, err := h.applyCurrentInputFile(r.Context(), a, norm.Standard)
 	if err != nil {
 		status, message := mapCurrentInputFileError(err)

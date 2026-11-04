@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -66,9 +67,12 @@ func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
 			"mobile":        acc.Mobile,
 			"proxy_id":      acc.ProxyID,
 			"has_password":  acc.Password != "",
+			"has_device_id": strings.TrimSpace(acc.DeviceID) != "",
 			"has_token":     token != "",
 			"token_preview": maskSecretPreview(token),
 			"test_status":   testStatus,
+			"pool_status":   acc.EffectivePoolStatus(time.Now()),
+			"mute_until":    acc.MuteUntil,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": items, "total": total, "page": page, "page_size": pageSize, "total_pages": totalPages})
@@ -121,6 +125,8 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	name, nameOK := fieldStringOptional(req, "name")
 	remark, remarkOK := fieldStringOptional(req, "remark")
+	deviceID, deviceIDOK := fieldStringOptional(req, "device_id")
+	resetPoolStatus, _ := req["reset_pool_status"].(bool)
 
 	err := h.Store.Update(func(c *config.Config) error {
 		for i, acc := range c.Accounts {
@@ -133,6 +139,13 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 			if remarkOK {
 				c.Accounts[i].Remark = remark
 			}
+			if deviceIDOK {
+				c.Accounts[i].DeviceID = deviceID
+			}
+			if resetPoolStatus {
+				c.Accounts[i].PoolStatus = ""
+				c.Accounts[i].MuteUntil = 0
+			}
 			return nil
 		}
 		return newRequestError("账号不存在")
@@ -144,6 +157,9 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, http.StatusBadRequest, map[string]any{"detail": err.Error()})
 		return
+	}
+	if resetPoolStatus {
+		h.Pool.Reset()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"success": true, "total_accounts": len(h.Store.Snapshot().Accounts)})
 }

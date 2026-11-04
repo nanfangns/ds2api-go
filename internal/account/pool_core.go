@@ -50,12 +50,11 @@ func (p *Pool) Reset() {
 			ids = append(ids, id)
 		}
 	}
+	maxPer := maxInflightFromEnv()
 	if p.store != nil {
-		p.maxInflightPerAccount = p.store.RuntimeAccountMaxInflight()
-	} else {
-		p.maxInflightPerAccount = maxInflightFromEnv()
+		maxPer = p.store.RuntimeAccountMaxInflight()
 	}
-	recommended := defaultRecommendedConcurrency(len(ids), p.maxInflightPerAccount)
+	recommended := defaultRecommendedConcurrency(len(ids), maxPer)
 	queueLimit := maxQueueFromEnv(recommended)
 	globalLimit := recommended
 	if p.store != nil {
@@ -66,7 +65,11 @@ func (p *Pool) Reset() {
 	defer p.mu.Unlock()
 	p.drainWaitersLocked()
 	p.queue = ids
-	p.inUse = map[string]int{}
+	// Account edits must not erase leases held by in-flight requests.
+	if p.inUse == nil {
+		p.inUse = map[string]int{}
+	}
+	p.maxInflightPerAccount = maxPer
 	p.recommendedConcurrency = recommended
 	p.maxQueueSize = queueLimit
 	p.globalMaxInflight = globalLimit
@@ -106,7 +109,7 @@ func (p *Pool) Status() map[string]any {
 	inUseAccounts := make([]string, 0, len(p.inUse))
 	inUseSlots := 0
 	for _, id := range p.queue {
-		if p.inUse[id] < p.maxInflightPerAccount {
+		if p.canAcquireIDLocked(id) {
 			available = append(available, id)
 		}
 	}

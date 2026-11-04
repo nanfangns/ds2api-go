@@ -1,6 +1,7 @@
 package completionruntime
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -48,6 +49,52 @@ type StartResult struct {
 }
 
 func StartCompletion(ctx context.Context, ds DeepSeekCaller, a *auth.RequestAuth, stdReq promptcompat.StandardRequest, opts Options) (StartResult, *assistantturn.OutputError) {
+	for {
+		result, outErr := startCompletionAttempt(ctx, ds, a, stdReq, opts)
+		if outErr != nil || result.Response == nil || a == nil {
+			return result, outErr
+		}
+		raw, inspected := inspectPossibleAccountFailure(result.Response)
+		if !inspected || !a.RecordAccountFailure(raw) {
+			return result, nil
+		}
+		if !a.SwitchAccount(ctx) {
+			// JSON business errors can arrive with HTTP 200, but are not SSE.
+			if result.Response.StatusCode == http.StatusOK {
+				result.Response.StatusCode = http.StatusTooManyRequests
+			}
+			return result, nil
+		}
+		if closeErr := result.Response.Body.Close(); closeErr != nil {
+			config.Logger.Warn("[completion_runtime] response body close failed", "error", closeErr)
+		}
+		stdReq = result.Request
+		var prepErr *assistantturn.OutputError
+		stdReq, prepErr = reuploadCurrentInputFileForAccount(ctx, ds, a, stdReq, opts)
+		if prepErr != nil {
+			return StartResult{Request: stdReq}, prepErr
+		}
+	}
+}
+
+// Inspect JSON/error responses before any output is sent, preserving the body
+// when it is not a recognized account restriction. SSE is never buffered.
+func inspectPossibleAccountFailure(resp *http.Response) ([]byte, bool) {
+	if resp == nil || resp.Body == nil || (resp.StatusCode == http.StatusOK && !strings.Contains(strings.ToLower(resp.Header.Get("Content-Type")), "json")) {
+		return nil, false
+	}
+	original := resp.Body
+	raw, err := io.ReadAll(io.LimitReader(original, 1<<20))
+	resp.Body = &replayReadCloser{Reader: io.MultiReader(bytes.NewReader(raw), original), Closer: original}
+	return raw, err == nil
+}
+
+type replayReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func startCompletionAttempt(ctx context.Context, ds DeepSeekCaller, a *auth.RequestAuth, stdReq promptcompat.StandardRequest, opts Options) (StartResult, *assistantturn.OutputError) {
 	maxAttempts := opts.MaxAttempts
 	if maxAttempts <= 0 {
 		maxAttempts = 3

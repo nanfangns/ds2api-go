@@ -13,7 +13,7 @@ func normalizeDSMLToolCallMarkup(text string) (string, bool) {
 	if !hasDSMLLikeMarkup && !hasCanonicalMarkup {
 		return canonicalized, true
 	}
-	return rewriteDSMLToolMarkupOutsideIgnored(canonicalized), true
+	return rewriteDSMLToolMarkupOutsideIgnored(rewriteColonRawValues(canonicalized)), true
 }
 
 func rewriteDSMLToolMarkupOutsideIgnored(text string) string {
@@ -49,6 +49,12 @@ func rewriteDSMLToolMarkupOutsideIgnored(text string) string {
 			b.WriteByte('/')
 		}
 		b.WriteString(tag.Name)
+		if tag.ColonStyle {
+			b.WriteString(text[tag.NameEnd : tag.End-1])
+			b.WriteByte('>')
+			i = tag.End + 1
+			continue
+		}
 		if delimLen := xmlTagEndDelimiterLenEndingAt(text, tag.End); delimLen > 0 {
 			b.WriteString(text[tag.NameEnd : tag.End+1-delimLen])
 			b.WriteByte('>')

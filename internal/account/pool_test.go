@@ -91,6 +91,22 @@ func TestPoolTargetAccountInflightLimit(t *testing.T) {
 	}
 }
 
+func TestResetPreservesActiveAccountLeases(t *testing.T) {
+	pool := newSingleAccountPoolForTest(t, "1")
+	acc, ok := pool.Acquire("", nil)
+	if !ok {
+		t.Fatal("initial acquire failed")
+	}
+	pool.Reset()
+	if _, ok := pool.Acquire("", nil); ok {
+		t.Fatal("reset must not free an in-flight slot")
+	}
+	pool.Release(acc.Identifier())
+	if _, ok := pool.Acquire("", nil); !ok {
+		t.Fatal("slot should be available after release")
+	}
+}
+
 func TestPoolConcurrentAcquireDistribution(t *testing.T) {
 	pool := newPoolForTest(t, "2")
 

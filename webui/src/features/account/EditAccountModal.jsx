@@ -43,6 +43,10 @@ export default function EditAccountModal({
                         />
                     </div>
                     <div>
+                        <label className="block text-sm font-medium mb-1.5">{t('accountManager.deviceIDOptional')}</label>
+                        <input type="password" className="input-field" autoComplete="off" placeholder={t('accountManager.deviceIDKeep')} value={editAccount.device_id} onChange={e => setEditAccount({ ...editAccount, device_id: e.target.value })} />
+                    </div>
+                    <div>
                         <label className="block text-sm font-medium mb-1.5">{t('accountManager.remarkOptional')}</label>
                         <input
                             type="text"

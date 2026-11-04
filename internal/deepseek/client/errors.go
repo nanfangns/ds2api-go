@@ -11,12 +11,17 @@ const (
 	FailureUnknown             FailureKind = ""
 	FailureDirectUnauthorized  FailureKind = "direct_unauthorized"
 	FailureManagedUnauthorized FailureKind = "managed_unauthorized"
+	FailureDeviceRejected      FailureKind = "device_rejected"
 )
 
 type RequestFailure struct {
 	Op      string
 	Kind    FailureKind
 	Message string
+}
+
+func (e *RequestFailure) DeviceRejected() bool {
+	return e != nil && e.Kind == FailureDeviceRejected
 }
 
 func (e *RequestFailure) Error() string {

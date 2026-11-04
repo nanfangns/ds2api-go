@@ -1,0 +1,28 @@
+FROM node:24 AS webui-builder
+WORKDIR /src
+COPY webui/package.json webui/package-lock.json ./webui/
+RUN npm ci --prefix webui --no-audit --no-fund
+COPY config.example.json ./config.example.json
+COPY webui ./webui
+RUN npm run build --prefix webui
+
+FROM golang:1.26 AS go-builder
+WORKDIR /src
+COPY go.mod go.sum ./
+RUN go mod download
+COPY . .
+RUN CGO_ENABLED=0 go build -buildvcs=false -ldflags="-s -w" -o /out/ds2api ./cmd/ds2api
+
+FROM mcr.microsoft.com/playwright:v1.63.0-noble
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 NODE_ENV=production PORT=80 DS2API_AUTO_BUILD_WEBUI=0
+WORKDIR /app
+COPY tools/device-harvest/package.json tools/device-harvest/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
+COPY tools/device-harvest/harvest.mjs tools/device-harvest/docker-entrypoint.sh ./
+COPY --from=go-builder /out/ds2api /usr/local/bin/ds2api
+COPY --from=webui-builder /src/static/admin /app/static/admin
+COPY config.example.json /app/config.example.json
+COPY scripts/vercel-container-entrypoint.sh /app/vercel-container-entrypoint.sh
+RUN chmod +x /app/vercel-container-entrypoint.sh /app/docker-entrypoint.sh
+EXPOSE 80
+ENTRYPOINT ["/app/vercel-container-entrypoint.sh"]

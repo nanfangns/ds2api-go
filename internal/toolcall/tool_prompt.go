@@ -9,57 +9,61 @@ import "strings"
 // The toolNames slice should contain the actual tool names available in the
 // current request; the function picks real names for examples.
 func BuildToolCallInstructions(toolNames []string) string {
+	tcO := MarkupPipeOpenTag(MarkupTagToolCalls)
+	tcC := MarkupPipeCloseTag(MarkupTagToolCalls)
+	ivC := MarkupPipeCloseTag(MarkupTagInvoke)
+	paramPH := wrapParameter("PARAMETER_NAME", MarkupWrapRaw("PARAMETER_VALUE"))
+	invokePH := MarkupPipeInvokeOpen("TOOL_NAME_HERE")
+	invokeNamed := MarkupPipeInvokeOpen("TOOL_NAME")
+
 	return `TOOL CALL FORMAT — FOLLOW EXACTLY:
 
-<|DSML|tool_calls>
-  <|DSML|invoke name="TOOL_NAME_HERE">
-    <|DSML|parameter name="PARAMETER_NAME"><![CDATA[PARAMETER_VALUE]]></|DSML|parameter>
-  </|DSML|invoke>
-</|DSML|tool_calls>
+` + tcO + `
+  ` + invokePH + `
+    ` + paramPH + `
+  ` + ivC + `
+` + tcC + `
 
-RULES:
-1) Use the <|DSML|tool_calls> wrapper format.
-2) Put one or more <|DSML|invoke> entries under a single <|DSML|tool_calls> root.
-3) Put the tool name in the invoke name attribute: <|DSML|invoke name="TOOL_NAME">.
-3a) Tag punctuation alphabet: ASCII < > / = " plus the halfwidth pipe |.
-4) All string values must use <![CDATA[...]]>, even short ones. This includes code, scripts, file contents, prompts, paths, names, and queries.
-5) Every top-level argument must be a <|DSML|parameter name="ARG_NAME">...</|DSML|parameter> node.
-6) Objects use nested XML elements inside the parameter body. Arrays may repeat <item> children.
-7) Numbers, booleans, and null stay plain text.
-8) Use only the parameter names in the tool schema. Do not invent fields.
-9) Fill parameters with the actual values required for this call. Do not emit placeholder, blank, or whitespace-only parameters.
-10) If a required parameter value is unknown, ask the user or answer normally instead of outputting an empty tool call.
-11) For shell tools such as Bash / execute_command, the command/script must be inside the command parameter. Never call them with an empty command.
-12) Do NOT wrap XML in markdown fences. Do NOT output explanations, role markers, or internal monologue.
-13) If you call a tool, the first non-whitespace characters of that tool block must be exactly <|DSML|tool_calls>.
-14) Never omit the opening <|DSML|tool_calls> tag, even if you already plan to close with </|DSML|tool_calls>.
-15) Compatibility note: the runtime also accepts the legacy XML tags <tool_calls> / <invoke> / <parameter>, but prefer the DSML-prefixed form above.
+Rules:
+1) Outer wrappers must use exactly two colons: ` + tcO + ` and ` + tcC + `.
+2) Place one or more ` + MarkupPipeOpenTag(MarkupTagInvoke) + ` under the same ` + tcO + ` root.
+3) Put the tool name in the invoke name attribute: ` + MarkupPipeInvokeOpen("TOOL_NAME") + `.
+4) String values — including short ones — must use [[...]]. Same for code, scripts, file contents, prompts, paths, names, and queries.
+5) Each top-level argument must be a complete node. Example: ` + wrapParameter("ARG_NAME", "…") + `.
+6) Objects/arrays may be passed as JSON inside [[...]]. Do not use nested markers.
+7) Numbers, booleans, and null are plain text. Do not wrap them in [[...]].
+8) Use only argument names declared in the schema; do not invent fields.
+9) Do not wrap tool tags in Markdown fences. Do not append text after the tags.
+10) When calling tools, the first non-whitespace character of that block must be ` + tcO + `.
+11) Never omit the opening ` + tcO + ` tag, even if you close with ` + tcC + ` later.
+12) User-facing prose must use the user's language, or the language the user explicitly requested.
+13) Fill parameters with the actual values required for this call. Do not emit placeholder, blank, or whitespace-only parameters.
+14) If a required parameter value is unknown, ask the user or answer normally instead of outputting an empty tool call.
+15) For shell tools such as Bash / execute_command, the command/script must be inside the command parameter. Never call them with an empty command.
 
-PARAMETER SHAPES:
-- string => <|DSML|parameter name="x"><![CDATA[value]]></|DSML|parameter>
-- object => <|DSML|parameter name="x"><field>...</field></|DSML|parameter>
-- array => <|DSML|parameter name="x"><item>...</item><item>...</item></|DSML|parameter>
-- number/bool/null => <|DSML|parameter name="x">plain_text</|DSML|parameter>
+Argument shapes:
+- string => ` + wrapParameter("x", MarkupWrapRaw("value")) + `
+- object/array => ` + wrapParameter("x", MarkupWrapRaw(`{"k":"v"}`)) + `
+- number/bool/null => ` + wrapParameter("x", "plain text") + `
 
-【WRONG — Do NOT do these】:
+[Wrong examples — forbidden]:
 
-Wrong 1 — mixed text after XML:
-  <|DSML|tool_calls>...</|DSML|tool_calls> I hope this helps.
-Wrong 2 — Markdown code fences:
-  ` + "```xml" + `
-  <|DSML|tool_calls>...</|DSML|tool_calls>
+Wrong 1 — explanation after tags:
+  ` + tcO + `...` + tcC + ` Hope this helps.
+Wrong 2 — Markdown fence:
+  ` + "```text" + `
+  ` + tcO + `...` + tcC + `
   ` + "```" + `
 Wrong 3 — missing opening wrapper:
-  <|DSML|invoke name="TOOL_NAME">...</|DSML|invoke>
-  </|DSML|tool_calls>
-Wrong 4 — empty parameters:
-  <|DSML|tool_calls>
-    <|DSML|invoke name="Bash">
-      <|DSML|parameter name="command"></|DSML|parameter>
-    </|DSML|invoke>
-  </|DSML|tool_calls>
+  ` + invokeNamed + `...` + ivC + `
+  ` + tcC + `
+Wrong 4 — claim a file was edited/written without a write tool call such as Edit / Write / StrReplace / write_to_file:
+  "Updated TODO.MD. Task done." (no tool call)
+  → Imaginary completion. If a write is needed, emit a real tool call. A spoken completion claim alone is invalid.
+Wrong 5 — empty parameters: do not call a tool with an empty command or other missing required value.
 
-Remember: The ONLY valid way to use tools is the <|DSML|tool_calls>...</|DSML|tool_calls> block at the end of your response.
+Remember: a valid tool call ends the reply with a ` + tcO + `...` + tcC + ` pair. Do not wrap it in Markdown fences.
+
 ` + buildCorrectToolExamples(toolNames)
 }
 
@@ -73,25 +77,25 @@ func buildCorrectToolExamples(toolNames []string) string {
 	examples := make([]string, 0, 4)
 
 	if single, ok := firstBasicExample(names); ok {
-		examples = append(examples, "Example A — Single tool:\n"+renderToolExampleBlock([]promptToolExample{single}))
+		examples = append(examples, "Example A — single tool:\n"+renderToolExampleBlock([]promptToolExample{single}))
 	}
 
 	if parallel := firstNBasicExamples(names, 2); len(parallel) >= 2 {
-		examples = append(examples, "Example B — Two tools in parallel:\n"+renderToolExampleBlock(parallel))
+		examples = append(examples, "Example B — two tools in parallel:\n"+renderToolExampleBlock(parallel))
 	}
 
 	if nested, ok := firstNestedExample(names); ok {
-		examples = append(examples, "Example C — Tool with nested XML parameters:\n"+renderToolExampleBlock([]promptToolExample{nested}))
+		examples = append(examples, "Example C — tool with nested JSON args:\n"+renderToolExampleBlock([]promptToolExample{nested}))
 	}
 
 	if script, ok := firstScriptExample(names); ok {
-		examples = append(examples, "Example D — Tool with long script using CDATA (RELIABLE FOR CODE/SCRIPTS):\n"+renderToolExampleBlock([]promptToolExample{script}))
+		examples = append(examples, "Example D — long script using [[...]] (for code/scripts):\n"+renderToolExampleBlock([]promptToolExample{script}))
 	}
 
 	if len(examples) == 0 {
 		return ""
 	}
-	return "【CORRECT EXAMPLES】:\n\n" + strings.Join(examples, "\n\n") + "\n\n"
+	return "[Correct examples]:\n\n" + strings.Join(examples, "\n\n") + "\n\n"
 }
 
 func uniqueToolNames(toolNames []string) []string {
@@ -150,21 +154,19 @@ func firstScriptExample(names []string) (promptToolExample, bool) {
 
 func renderToolExampleBlock(calls []promptToolExample) string {
 	var b strings.Builder
-	b.WriteString("<|DSML|tool_calls>\n")
+	b.WriteString(MarkupPipeOpenTag(MarkupTagToolCalls) + "\n")
 	for _, call := range calls {
-		b.WriteString(`  <|DSML|invoke name="`)
-		b.WriteString(call.name)
-		b.WriteString(`">` + "\n")
+		b.WriteString("  " + MarkupPipeInvokeOpen(call.name) + "\n")
 		b.WriteString(indentPromptParameters(call.params, "    "))
-		b.WriteString("\n  </|DSML|invoke>\n")
+		b.WriteString("\n  " + MarkupPipeCloseTag(MarkupTagInvoke) + "\n")
 	}
-	b.WriteString("</|DSML|tool_calls>")
+	b.WriteString(MarkupPipeCloseTag(MarkupTagToolCalls))
 	return b.String()
 }
 
 func indentPromptParameters(body, indent string) string {
 	if strings.TrimSpace(body) == "" {
-		return indent + `<|DSML|parameter name="content"></|DSML|parameter>`
+		return indent + MarkupParamOpen("content") + MarkupPipeCloseTag(MarkupTagParameter)
 	}
 	lines := strings.Split(body, "\n")
 	for i, line := range lines {
@@ -178,33 +180,33 @@ func indentPromptParameters(body, indent string) string {
 }
 
 func wrapParameter(name, inner string) string {
-	return `<|DSML|parameter name="` + name + `">` + inner + `</|DSML|parameter>`
+	return MarkupParamOpen(name) + inner + MarkupPipeCloseTag(MarkupTagParameter)
 }
 
 func exampleBasicParams(name string) (string, bool) {
 	switch strings.TrimSpace(name) {
 	case "Read":
-		return wrapParameter("file_path", promptCDATA("README.md")), true
+		return wrapParameter("file_path", promptRaw("README.md")), true
 	case "Glob":
-		return wrapParameter("pattern", promptCDATA("**/*.go")) + "\n" + wrapParameter("path", promptCDATA(".")), true
+		return wrapParameter("pattern", promptRaw("**/*.go")) + "\n" + wrapParameter("path", promptRaw(".")), true
 	case "read_file":
-		return wrapParameter("path", promptCDATA("src/main.go")), true
+		return wrapParameter("path", promptRaw("src/main.go")), true
 	case "list_files":
-		return wrapParameter("path", promptCDATA(".")), true
+		return wrapParameter("path", promptRaw(".")), true
 	case "search_files":
-		return wrapParameter("query", promptCDATA("tool call parser")), true
+		return wrapParameter("query", promptRaw("tool call parser")), true
 	case "Bash", "execute_command":
-		return wrapParameter("command", promptCDATA("pwd")), true
+		return wrapParameter("command", promptRaw("pwd")), true
 	case "exec_command":
-		return wrapParameter("cmd", promptCDATA("pwd")), true
+		return wrapParameter("cmd", promptRaw("pwd")), true
 	case "Write":
-		return wrapParameter("file_path", promptCDATA("notes.txt")) + "\n" + wrapParameter("content", promptCDATA("Hello world")), true
+		return wrapParameter("file_path", promptRaw("notes.txt")) + "\n" + wrapParameter("content", promptRaw("Hello world")), true
 	case "write_to_file":
-		return wrapParameter("path", promptCDATA("notes.txt")) + "\n" + wrapParameter("content", promptCDATA("Hello world")), true
+		return wrapParameter("path", promptRaw("notes.txt")) + "\n" + wrapParameter("content", promptRaw("Hello world")), true
 	case "Edit":
-		return wrapParameter("file_path", promptCDATA("README.md")) + "\n" + wrapParameter("old_string", promptCDATA("foo")) + "\n" + wrapParameter("new_string", promptCDATA("bar")), true
+		return wrapParameter("file_path", promptRaw("README.md")) + "\n" + wrapParameter("old_string", promptRaw("foo")) + "\n" + wrapParameter("new_string", promptRaw("bar")), true
 	case "MultiEdit":
-		return wrapParameter("file_path", promptCDATA("README.md")) + "\n" + `<|DSML|parameter name="edits"><item><old_string>` + promptCDATA("foo") + `</old_string><new_string>` + promptCDATA("bar") + `</new_string></item></|DSML|parameter>`, true
+		return wrapParameter("file_path", promptRaw("README.md")) + "\n" + wrapParameter("edits", promptRaw(`[{"old_string":"foo","new_string":"bar"}]`)), true
 	}
 	return "", false
 }
@@ -212,11 +214,11 @@ func exampleBasicParams(name string) (string, bool) {
 func exampleNestedParams(name string) (string, bool) {
 	switch strings.TrimSpace(name) {
 	case "MultiEdit":
-		return wrapParameter("file_path", promptCDATA("README.md")) + "\n" + `<|DSML|parameter name="edits"><item><old_string>` + promptCDATA("foo") + `</old_string><new_string>` + promptCDATA("bar") + `</new_string></item></|DSML|parameter>`, true
+		return wrapParameter("file_path", promptRaw("README.md")) + "\n" + wrapParameter("edits", promptRaw(`[{"old_string":"foo","new_string":"bar"}]`)), true
 	case "Task":
-		return wrapParameter("description", promptCDATA("Investigate flaky tests")) + "\n" + wrapParameter("prompt", promptCDATA("Run targeted tests and summarize failures")), true
+		return wrapParameter("description", promptRaw("investigate flaky tests")) + "\n" + wrapParameter("prompt", promptRaw("run the target tests and summarize failure reasons")), true
 	case "ask_followup_question":
-		return wrapParameter("question", promptCDATA("Which approach do you prefer?")) + "\n" + `<|DSML|parameter name="follow_up"><item><text>` + promptCDATA("Option A") + `</text></item><item><text>` + promptCDATA("Option B") + `</text></item></|DSML|parameter>`, true
+		return wrapParameter("question", promptRaw("Which option do you prefer?")) + "\n" + wrapParameter("follow_up", promptRaw(`[{"text":"Option A"},{"text":"Option B"}]`)), true
 	}
 	return "", false
 }
@@ -234,25 +236,19 @@ echo "literal dollar: $HOME"`
 
 	switch strings.TrimSpace(name) {
 	case "Bash":
-		return wrapParameter("command", promptCDATA(scriptCommand)) + "\n" + wrapParameter("description", promptCDATA("Test shell escaping")), true
+		return wrapParameter("command", promptRaw(scriptCommand)) + "\n" + wrapParameter("description", promptRaw("verify shell escaping")), true
 	case "execute_command":
-		return wrapParameter("command", promptCDATA(scriptCommand)), true
+		return wrapParameter("command", promptRaw(scriptCommand)), true
 	case "exec_command":
-		return wrapParameter("cmd", promptCDATA(scriptCommand)), true
+		return wrapParameter("cmd", promptRaw(scriptCommand)), true
 	case "Write":
-		return wrapParameter("file_path", promptCDATA("test_escape.sh")) + "\n" + wrapParameter("content", promptCDATA(scriptContent)), true
+		return wrapParameter("file_path", promptRaw("test_escape.sh")) + "\n" + wrapParameter("content", promptRaw(scriptContent)), true
 	case "write_to_file":
-		return wrapParameter("path", promptCDATA("test_escape.sh")) + "\n" + wrapParameter("content", promptCDATA(scriptContent)), true
+		return wrapParameter("path", promptRaw("test_escape.sh")) + "\n" + wrapParameter("content", promptRaw(scriptContent)), true
 	}
 	return "", false
 }
 
-func promptCDATA(text string) string {
-	if text == "" {
-		return ""
-	}
-	if strings.Contains(text, "]]>") {
-		return "<![CDATA[" + strings.ReplaceAll(text, "]]>", "]]]]><![CDATA[>") + "]]>"
-	}
-	return "<![CDATA[" + text + "]]>"
+func promptRaw(text string) string {
+	return MarkupWrapRaw(text)
 }

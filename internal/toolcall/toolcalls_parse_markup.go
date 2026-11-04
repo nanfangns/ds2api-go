@@ -270,6 +270,13 @@ func skipXMLIgnoredSection(text string, i int) (next int, advanced bool, blocked
 	if i < 0 || i >= len(text) {
 		return i, false, false
 	}
+	if isColonRawStart(text, i) {
+		end, ok := findColonRawClose(text, i+2)
+		if !ok {
+			return 0, false, true
+		}
+		return end + 2, true, false
+	}
 	if bodyStart, ok := matchToolCDATAOpenAt(text, i); ok {
 		end := findToolCDATAEnd(text, bodyStart)
 		if end < 0 {

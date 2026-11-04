@@ -22,7 +22,7 @@ export default function AddAccountModal({
                         <X className="w-5 h-5" />
                     </button>
                 </div>
-                <div className="p-6 space-y-4">
+                <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
                     <div>
                         <label className="block text-sm font-medium mb-1.5">{t('accountManager.nameOptional')}</label>
                         <input
@@ -62,6 +62,10 @@ export default function AddAccountModal({
                             value={newAccount.mobile}
                             onChange={e => setNewAccount({ ...newAccount, mobile: e.target.value })}
                         />
+                    </div>
+                    <div>
+                        <label className="block text-sm font-medium mb-1.5">{t('accountManager.deviceIDOptional')}</label>
+                        <input type="password" className="input-field" autoComplete="off" value={newAccount.device_id} onChange={e => setNewAccount({ ...newAccount, device_id: e.target.value })} />
                     </div>
                     <div>
                         <label className="block text-sm font-medium mb-1.5">{t('accountManager.passwordLabel')} <span className="text-destructive">*</span></label>

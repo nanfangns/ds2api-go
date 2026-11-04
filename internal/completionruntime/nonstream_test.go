@@ -331,3 +331,37 @@ func sseHTTPResponse(status int, lines ...string) *http.Response {
 		Body:       io.NopCloser(strings.NewReader(body)),
 	}
 }
+
+func TestStartCompletionQuarantinesMutedAccountAndRetries(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["managed-key"],"accounts":[{"email":"first@test.com","password":"pwd"},{"email":"second@test.com","password":"pwd"}]}`)
+	store := config.LoadStore()
+	resolver := auth.NewResolver(store, account.NewPool(store), func(_ context.Context, acc config.Account) (string, error) { return "token-" + acc.Identifier(), nil })
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer managed-key")
+	a, err := resolver.Determine(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Release(a)
+	muted := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":{"biz_code":5,"biz_msg":"user is muted","biz_data":{"is_muted":1}}}`))}
+	ds := &fakeDeepSeekCaller{sessionByAccount: true, responses: []*http.Response{muted, sseHTTPResponse(http.StatusOK, `data: {"p":"response/content","v":"ok"}`)}}
+	result, outErr := StartCompletion(context.Background(), ds, a, promptcompat.StandardRequest{ResponseModel: "deepseek-flash"}, Options{})
+	if outErr != nil {
+		t.Fatalf("unexpected error: %#v", outErr)
+	}
+	defer func() {
+		if err := result.Response.Body.Close(); err != nil {
+			t.Errorf("close response: %v", err)
+		}
+	}()
+	if a.AccountID != "second@test.com" || len(ds.completionAccounts) != 2 {
+		t.Fatalf("did not switch accounts: %v", ds.completionAccounts)
+	}
+	first, _ := store.FindAccount("first@test.com")
+	if first.PoolStatus != "muted" || first.MuteUntil == 0 {
+		t.Fatalf("restriction not recorded: %+v", first)
+	}
+	if _, ok := resolver.Pool.Acquire("first@test.com", nil); ok {
+		t.Fatal("muted account was not quarantined")
+	}
+}

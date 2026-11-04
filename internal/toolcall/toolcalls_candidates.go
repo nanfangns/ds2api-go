@@ -39,6 +39,11 @@ func canonicalizeToolCallCandidateSpans(text string) string {
 			i++
 			continue
 		}
+		if tag.ColonStyle {
+			b.WriteString(text[tag.Start : tag.End+1])
+			i = tag.End + 1
+			continue
+		}
 		b.WriteString(canonicalizeRecognizedToolMarkupTag(text[tag.Start:tag.End+1], tag))
 		i = tag.End + 1
 	}

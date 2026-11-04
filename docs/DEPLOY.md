@@ -296,16 +296,17 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # 个人账号可留空
 | `DS2API_ACCOUNT_MAX_QUEUE` | 等待队列上限 | `recommended_concurrency` |
 | `DS2API_GLOBAL_MAX_INFLIGHT` | 全局并发上限 | `recommended_concurrency` |
 | `DS2API_ENV_WRITEBACK` | 检测到 `DS2API_CONFIG_JSON` 时自动写入 `DS2API_CONFIG_PATH`，并在成功后转为文件模式（`1/true/yes/on`） | 关闭 |
-| `DS2API_VERCEL_INTERNAL_SECRET` | 混合流式内部鉴权 | 回退用 `DS2API_ADMIN_KEY` |
-| `DS2API_VERCEL_STREAM_LEASE_TTL_SECONDS` | 流式 lease TTL | `900` |
+| `DS2API_USER_FACING_CONTEXT_LIMIT_TOKENS` | 上下文预检对客户端展示的估算上限 | `896000` |
+| `DS2API_LOGICAL_CONTEXT_LIMIT_TOKENS` | 本地分词估算上限 | `2850000` |
+| `DEVICE_HARVEST_URL` | 可选的独立设备令牌采集服务地址 | Vercel 容器默认使用本机采集器 |
+| `DEVICE_HARVEST_TOKEN` | 采集服务的认证令牌 | 未配置 |
 | `DS2API_RAW_STREAM_SAMPLE_ROOT` | raw stream 样本保存/读取根目录 | `tests/raw_stream_samples` |
 | `DS2API_STATIC_ADMIN_DIR` | WebUI 静态资源目录 | `static/admin` |
 | `DS2API_AUTO_BUILD_WEBUI` | 本地启动时是否自动构建缺失的 WebUI（`1/true/yes/on` 或 `0/false/no/off`） | 非 Vercel 默认开启 |
 | `VERCEL_TOKEN` | Vercel 同步 token | — |
 | `VERCEL_PROJECT_ID` | Vercel 项目 ID | — |
 | `VERCEL_TEAM_ID` | Vercel 团队 ID | — |
-| `DS2API_CHAT_HISTORY_PATH` | Chat history 存储路径（Vercel 上必须设为 `/tmp/chat_history.json`，否则因文件系统只读而不可用） | `data/chat_history.json` |
-| `DS2API_VERCEL_PROTECTION_BYPASS` | 部署保护绕过密钥（内部 Node→Go 调用） | — |
+| `DS2API_CHAT_HISTORY_PATH` | Chat history 存储路径（Vercel 容器默认使用 `/tmp/chat_history.json`） | `data/chat_history.json` |
 
 ### 3.3 运行时行为配置（通过 Admin API 设置）
 
@@ -319,113 +320,15 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # 个人账号可留空
 
 ### 3.4 Vercel 架构说明
 
-```text
-请求 ─────┐
-          │
-          ▼
-     vercel.json 路由规则
-          │
-    ┌─────┴─────┐
-    │           │
-    ▼           ▼
-api/index.go  api/chat-stream.js
-(Go Runtime)  (Node Runtime)
-```
+`vercel.json` 使用 Vercel Services 构建 `Dockerfile.vercel`，由同一个容器提供 Go 网关、流式接口和已构建的管理台。入口脚本会启动设备采集器，绑定 `127.0.0.1` 并生成随机的内部认证令牌；如果指定 `DEVICE_HARVEST_URL`，则改用指定的外部采集服务和 `DEVICE_HARVEST_TOKEN`。
 
-- **入口文件**：`api/index.go`（Serverless Go）
-- **流式入口**：`api/chat-stream.js`（Node Runtime，保证实时 SSE；`vercel.json` 仅把规范路径 `/v1/chat/completions` 重写到这里，根路径快捷别名 `/chat/completions` 仍走 Go 入口）
-- **路由重写**：`vercel.json`
-- **构建命令**：`npm ci --prefix webui && npm run build --prefix webui`（自动执行）
-
-#### 流式处理链路
-
-由于 Vercel Go Runtime 存在平台层响应缓冲，本项目在 Vercel 上采用"**Go prepare + Node stream**"的混合链路：
-
-1. `api/chat-stream.js` 收到 `/v1/chat/completions` 请求
-2. Node 调用 Go 内部 prepare 接口（`?__stream_prepare=1`），获取会话 ID、PoW、token 等
-3. Go prepare 创建 stream lease，锁定账号
-4. Node 直连 DeepSeek 上游，实时流式转发 SSE 给客户端（含 OpenAI chunk 封装与 tools 防泄漏筛分）
-5. 流结束后 Node 调用 Go release 接口（`?__stream_release=1`），释放账号
-
-> 该适配**仅在 Vercel 环境生效**；本地与 Docker 仍走纯 Go 链路。
-
-#### 非流式回退与 Tool Call 处理
-
-- `api/chat-stream.js` 仅对非流式请求回退到 Go 入口（`?__go=1`）
-- 流式请求（包括带 `tools`）走 Node 路径，并执行与 Go 对齐的 tool-call 防泄漏处理
-- Node 流式路径同时对齐 Go 的终结态语义：空可见输出会返回同形状错误 SSE，空 `content_filter` 会返回 `content_filter` 错误
-- WebUI 的"非流式测试"直接请求 `?__go=1`，避免 Node 中转造成长请求超时
-
-#### 函数时长
-
-`vercel.json` 已将 `api/chat-stream.js` 与 `api/index.go` 的 `maxDuration` 设为 `300`（受 Vercel 套餐上限约束）。
+Vercel Services 处于 Beta，镜像存储和运行资源可能产生费用，包含浏览器的容器首次启动可能较慢。容器文件系统及内存均为临时存储：对话记录、运行时账号禁言状态和采集的设备令牌不保证跨实例持久保存；管理配置需要通过 Vercel 环境变量同步。
 
 ### 3.5 Vercel 常见报错排查
 
-#### Go 构建失败
-
-```text
-Error: Command failed: go build -ldflags -s -w -o .../bootstrap ...
-```
-
-**原因**：Vercel 项目的 Go 构建参数配置不正确（`-ldflags` 没有作为一个整体字符串传递）。
-
-**解决**：
-
-1. 进入 Vercel Project Settings → Build and Development Settings
-2. **清空**自定义 Go Build Flags / Build Command（推荐）
-3. 若必须设置 ldflags，使用 `-ldflags="-s -w"`（保证它是一个参数）
-4. 确认仓库 `go.mod` 为受支持版本（当前为 `go 1.26.0`）
-5. 重新部署（建议清缓存后 Redeploy）
-
-#### Internal 包导入错误
-
-```text
-use of internal package ds2api/internal/server not allowed
-```
-
-**原因**：Vercel Go 入口文件直接 `import internal/...`。
-
-**解决**：当前仓库已通过公开桥接包 `app` 解决：`api/index.go` → `ds2api/app` → `internal/server`。
-
-#### 输出目录错误
-
-```text
-No Output Directory named "public" found after the Build completed.
-```
-
-**解决**：当前仓库使用 `static` 作为输出目录（`vercel.json` 中 `"outputDirectory": "static"`）。若你在项目设置里手动改过 Output Directory，请设为 `static` 或清空让仓库配置生效。
-
-#### 部署保护拦截
-
-如果接口返回 Vercel HTML 页面 `Authentication Required`：
-
-- **方案 A**：关闭该部署/环境的 Deployment Protection（推荐用于公开 API）
-- **方案 B**：请求中添加 `x-vercel-protection-bypass` 头
-- **方案 C**：设置 `VERCEL_AUTOMATION_BYPASS_SECRET`（或 `DS2API_VERCEL_PROTECTION_BYPASS`），仅影响内部 Node→Go 调用
-
-#### Chat History 不可用（read-only file system）
-
-```text
-create chat history dir: mkdir /var/task/data: read-only file system
-```
-
-**原因**：Vercel Serverless 函数的文件系统（`/var/task`）为只读，chat history 尝试在该路径下创建目录失败。
-
-**解决**：在 Vercel Project Settings → Environment Variables 中添加：
-
-```text
-DS2API_CHAT_HISTORY_PATH=/tmp/chat_history.json
-```
-
-`/tmp` 是 Vercel Serverless 环境中唯一可写的目录。数据在函数冷启动之间不会持久化（ephemeral），但在单个实例生命周期内功能正常。
-
-### 3.6 仓库不提交构建产物
-
-- `static/admin` 目录不在 Git 中
-- Vercel / Docker 构建阶段自动生成 WebUI 静态文件
-
----
+- 构建失败时检查 Vercel 项目设置是否覆盖了仓库中的容器构建配置，并查看构建日志。
+- 返回 `Authentication Required` 时检查当前部署的访问保护设置；预览环境可以使用有时效的部署分享链接测试。
+- 如果账号仍触发设备风控，检查容器启动日志、采集器健康状态以及账号配置；也可以配置可用的独立采集服务。
 
 ## 四、本地源码运行
 

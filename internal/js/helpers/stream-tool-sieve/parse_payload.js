@@ -256,7 +256,7 @@ function normalizeDSMLToolCallMarkup(text) {
     return { text: canonicalized, ok: true };
   }
   return {
-    text: replaceDSMLToolMarkupOutsideIgnored(canonicalized),
+    text: replaceDSMLToolMarkupOutsideIgnored(rewriteColonRawValues(canonicalized)),
     ok: true,
   };
 }
@@ -373,7 +373,8 @@ function replaceDSMLToolMarkupOutsideIgnored(text) {
     }
     const tag = scanToolMarkupTagAt(raw, i);
     if (tag) {
-      out += `<${tag.closing ? '/' : ''}${tag.name}${raw.slice(tag.nameEnd, tag.end)}>`;
+      const attrsEnd = tag.colonStyle ? tag.end - 1 : tag.end;
+      out += `<${tag.closing ? '/' : ''}${tag.name}${raw.slice(tag.nameEnd, attrsEnd)}>`;
       i = tag.end + 1;
       continue;
     }
@@ -524,6 +525,10 @@ function findMatchingXmlEndTagOutsideCDATA(text, tag, from) {
 
 function skipXmlIgnoredSection(text, i) {
   const raw = toStringSafe(text);
+  if (isColonRawStart(raw, i)) {
+    const end = findColonRawClose(raw, i + 2);
+    return end < 0 ? { advanced: false, blocked: true, next: i } : { advanced: true, blocked: false, next: end + 2 };
+  }
   const openLen = toolCDATAOpenLenAt(raw, i);
   if (openLen > 0) {
     const end = findToolCDATAEnd(raw, i + openLen);
@@ -569,6 +574,9 @@ function findCDATAEnd(text, from) {
 
 function scanToolMarkupTagAt(text, start) {
   const raw = toStringSafe(text);
+  if (raw[start] === ':') {
+    return scanColonToolMarkupTagAt(raw, start);
+  }
   const startDelimLen = xmlTagStartDelimiterLenAt(raw, start);
   if (!raw || start < 0 || start >= raw.length || !startDelimLen) {
     return null;
@@ -701,6 +709,8 @@ function findMatchingToolMarkupClose(text, openTag) {
 
 function findPartialToolMarkupStart(text) {
   const raw = toStringSafe(text);
+  const colon = findPartialColonToolMarkupStart(raw);
+  if (colon >= 0) return colon;
   const lastLT = lastIndexOfToolMarkupStartDelimiter(raw);
   if (lastLT < 0) {
     return -1;
@@ -745,6 +755,7 @@ function isToolMarkupWhitespaceLike(ch) {
 
 function isPartialToolMarkupTagPrefix(text) {
   const raw = toStringSafe(text);
+  if (raw.startsWith(':')) return isPartialColonToolMarkupTagPrefix(raw);
   if (!raw || !isXmlTagStartDelimiter(raw[0]) || containsXmlTagTerminator(raw)) {
     return false;
   }
@@ -1108,7 +1119,7 @@ function canonicalizeToolCallCandidateSpans(text) {
       i += 1;
       continue;
     }
-    out += canonicalizeRecognizedToolMarkupTag(raw.slice(tag.start, tag.end + 1), tag);
+    out += tag.colonStyle ? raw.slice(tag.start, tag.end + 1) : canonicalizeRecognizedToolMarkupTag(raw.slice(tag.start, tag.end + 1), tag);
     i = tag.end + 1;
   }
   return out;
@@ -2637,6 +2648,107 @@ function isOnlyRawValue(obj) {
   }
   const keys = Object.keys(obj);
   return keys.length === 1 && keys[0] === '_raw';
+}
+
+const COLON_TOOL_NAMES = [
+  ['tool_calls', 'tool_calls'], ['tool-calls', 'tool_calls'], ['toolcalls', 'tool_calls'],
+  ['parameter', 'parameter'], ['invoke', 'invoke'], ['param', 'parameter'], ['tc', 'tool_calls'],
+];
+
+function scanColonToolMarkupTagAt(raw, start) {
+  if (start < 0 || !raw.startsWith('::', start)) return null;
+  let i = start + 2;
+  const closing = raw[i] === '/';
+  if (closing) i += 1;
+  const nameStart = i;
+  let name = '';
+  let nameEnd = i;
+  for (const [candidate, canonical] of COLON_TOOL_NAMES) {
+    const end = i + candidate.length;
+    if (raw.slice(i, end).toLowerCase() === candidate && (end === raw.length || /[\s:]/.test(raw[end]))) {
+      name = canonical;
+      nameEnd = end;
+      break;
+    }
+  }
+  if (!name) return null;
+  let quote = '';
+  for (let pos = nameEnd; pos + 1 < raw.length; pos += 1) {
+    if (quote) {
+      if (raw[pos] === quote) quote = '';
+      continue;
+    }
+    if (raw[pos] === '"' || raw[pos] === "'") {
+      quote = raw[pos];
+      continue;
+    }
+    if (raw[pos] === ':' && raw[pos + 1] === ':') {
+      const attrs = raw.slice(nameEnd, pos);
+      if (attrs && !/^\s/.test(attrs)) return null;
+      return { start, end: pos + 1, nameStart, nameEnd, name, closing, selfClosing: false, dsmlLike: true, canonical: false, colonStyle: true };
+    }
+  }
+  return null;
+}
+
+function isPartialColonToolMarkupTagPrefix(raw) {
+  if (raw === ':' || raw === '::' || raw === '::/') return true;
+  if (!raw.startsWith('::') || scanColonToolMarkupTagAt(raw, 0)) return false;
+  const rest = raw.slice(2).replace(/^\//, '').toLowerCase();
+  return COLON_TOOL_NAMES.some(([name]) => name.startsWith(rest) || rest.startsWith(name + ' ') || rest.startsWith(name + ':'));
+}
+
+function findPartialColonToolMarkupStart(raw) {
+  for (let pos = 0; pos < raw.length;) {
+    const start = raw.indexOf(':', pos);
+    if (start < 0) return -1;
+    const tag = findToolMarkupTagOutsideIgnored(raw, start);
+    if (tag && tag.start === start) {
+      pos = tag.end + 1;
+      continue;
+    }
+    if (isPartialColonToolMarkupTagPrefix(raw.slice(start))) return start;
+    pos = start + 1;
+  }
+  return -1;
+}
+
+function findColonRawClose(raw, from) {
+  for (let i = from; i + 1 < raw.length; i += 1) {
+    if (raw.slice(i, i + 2) !== ']]') continue;
+    if (raw.startsWith(']] ]]', i)) { i += 4; continue; }
+    return i;
+  }
+  return -1;
+}
+
+function isColonRawStart(raw, pos) {
+  if (!raw.startsWith('[[', pos)) return false;
+  const start = raw.slice(0, pos).toLowerCase().lastIndexOf('::param');
+  if (start < 0) return false;
+  const tag = scanColonToolMarkupTagAt(raw, start);
+  return Boolean(tag && tag.name === 'parameter' && !tag.closing && tag.end < pos && !raw.slice(tag.end + 1, pos).trim());
+}
+
+function rewriteColonRawValues(raw) {
+  if (!raw.includes('[[')) return raw;
+  let out = '';
+  for (let i = 0; i < raw.length;) {
+    if (isColonRawStart(raw, i)) {
+      const end = findColonRawClose(raw, i + 2);
+      if (end < 0) return out + raw.slice(i);
+      const value = raw.slice(i + 2, end).replaceAll(']] ]]', ']]').replaceAll(']]>', ']]]]><![CDATA[>');
+      out += '<![CDATA[' + value + ']]>';
+      i = end + 2;
+      continue;
+    }
+    const skipped = skipXmlIgnoredSection(raw, i);
+    if (skipped.blocked) return out + raw.slice(i);
+    if (skipped.advanced) { out += raw.slice(i, skipped.next); i = skipped.next; continue; }
+    out += raw[i];
+    i += 1;
+  }
+  return out;
 }
 
 module.exports = {

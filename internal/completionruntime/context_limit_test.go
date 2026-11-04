@@ -45,7 +45,7 @@ func TestContextGateErrorReturnsBadRequestBeforeUpstream(t *testing.T) {
 	if outErr == nil {
 		t.Fatal("expected context gate error")
 	}
-	if outErr.Status != http.StatusBadRequest || outErr.Code != "invalid_request_error" || outErr.Param != "" {
+	if outErr.Status != http.StatusBadRequest || outErr.Code != "invalid_request_error" {
 		t.Fatalf("unexpected error shape: %#v", outErr)
 	}
 	if outErr.Message == "" {

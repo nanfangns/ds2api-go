@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"strings"
+	"time"
 )
 
 type Config struct {
@@ -27,13 +28,27 @@ type Config struct {
 }
 
 type Account struct {
-	Name     string `json:"name,omitempty"`
-	Remark   string `json:"remark,omitempty"`
-	Email    string `json:"email,omitempty"`
-	Mobile   string `json:"mobile,omitempty"`
-	Password string `json:"password,omitempty"`
-	Token    string `json:"token,omitempty"`
-	ProxyID  string `json:"proxy_id,omitempty"`
+	Name       string `json:"name,omitempty"`
+	Remark     string `json:"remark,omitempty"`
+	Email      string `json:"email,omitempty"`
+	Mobile     string `json:"mobile,omitempty"`
+	Password   string `json:"password,omitempty"`
+	DeviceID   string `json:"device_id,omitempty"`
+	Token      string `json:"token,omitempty"`
+	ProxyID    string `json:"proxy_id,omitempty"`
+	PoolStatus string `json:"pool_status,omitempty"`
+	MuteUntil  int64  `json:"mute_until,omitempty"`
+}
+
+// EffectivePoolStatus permits muted accounts to rejoin after the reported expiry.
+func (a Account) EffectivePoolStatus(now time.Time) string {
+	if a.PoolStatus == "muted" && a.MuteUntil > 0 && now.Unix() >= a.MuteUntil {
+		return ""
+	}
+	if a.PoolStatus == "muted" || a.PoolStatus == "banned" {
+		return a.PoolStatus
+	}
+	return ""
 }
 
 type APIKey struct {
@@ -98,6 +113,7 @@ func (c *Config) NormalizeCredentials() {
 	for i := range c.Accounts {
 		c.Accounts[i].Name = strings.TrimSpace(c.Accounts[i].Name)
 		c.Accounts[i].Remark = strings.TrimSpace(c.Accounts[i].Remark)
+		c.Accounts[i].DeviceID = strings.TrimSpace(c.Accounts[i].DeviceID)
 	}
 
 	c.Vercel = NormalizeVercelConfig(c.Vercel)

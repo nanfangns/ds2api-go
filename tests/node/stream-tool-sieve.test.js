@@ -31,6 +31,36 @@ function collectText(events) {
     .join('');
 }
 
+test('Whale colon tool calls parse and stream without leaking markup', () => {
+  const payload = '::tc::\n::invoke name="read_file"::\n::param name="path"::[[/tmp/a.txt]]::/param::\n::/invoke::\n::/tc::';
+  const calls = parseToolCalls(payload, ['read_file']);
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].input, { path: '/tmp/a.txt' });
+  const events = runSieve([...payload], ['read_file']);
+  assert.equal(events.filter((event) => event.type === 'tool_calls').flatMap((event) => event.calls).length, 1);
+  assert.doesNotMatch(collectText(events), /::(?:tc|invoke)/);
+});
+
+test('Whale colon calls preserve opaque content and parse structured parameters', () => {
+  const payload = '::tc::::invoke name="write_file"::' +
+    '::param name="content"::[[before ::/tc:: and ] ] ]] ]] after]]::/param::' +
+    '::param name="options"::[[{"items":[1,2],"active":true}]]::/param::' +
+    '::/invoke::::/tc::';
+  const calls = parseToolCalls(payload, ['write_file']);
+  assert.deepEqual(calls.map((call) => call.input), [{
+    content: 'before ::/tc:: and ] ] ]] after',
+    options: { items: [1, 2], active: true },
+  }]);
+  const events = runSieve([...payload], ['write_file']);
+  assert.deepEqual(events.filter((event) => event.type === 'tool_calls').flatMap((event) => event.calls).map((call) => call.input), calls.map((call) => call.input));
+});
+
+test('ordinary brackets do not change legacy XML tool calls', () => {
+  const payload = 'ordinary [[ text <tool_calls><invoke name="write_file"><parameter name="content">[[legacy]]</parameter></invoke></tool_calls>';
+  const calls = parseToolCalls(payload, ['write_file']);
+  assert.deepEqual(calls.map((call) => call.input), [{ content: '[[legacy]]' }]);
+});
+
 test('extractToolNames keeps only declared tool names (Go parity)', () => {
   const names = extractToolNames([
     { function: { description: 'no name tool' } },

@@ -147,7 +147,7 @@ func TestHandleVercelStreamPrepareAppliesCurrentInputFile(t *testing.T) {
 	}
 }
 
-func TestHandleVercelStreamPrepareUsesHalfwidthDSMLToolPrompt(t *testing.T) {
+func TestHandleVercelStreamPrepareUsesColonToolPrompt(t *testing.T) {
 	t.Setenv("VERCEL", "1")
 	t.Setenv("DS2API_VERCEL_INTERNAL_SECRET", "stream-secret")
 
@@ -199,8 +199,8 @@ func TestHandleVercelStreamPrepareUsesHalfwidthDSMLToolPrompt(t *testing.T) {
 	payload, _ := body["payload"].(map[string]any)
 	payloadPrompt, _ := payload["prompt"].(string)
 	for label, promptText := range map[string]string{"final_prompt": finalPrompt, "payload.prompt": payloadPrompt} {
-		if !strings.Contains(promptText, "<|DSML|tool_calls>") || !strings.Contains(promptText, "Tag punctuation alphabet: ASCII < > / = \" plus the halfwidth pipe |.") {
-			t.Fatalf("expected %s to contain halfwidth DSML tool instructions, got %q", label, promptText)
+		if !strings.Contains(promptText, "::tc::") || !strings.Contains(promptText, "Outer wrappers must use exactly two colons") {
+			t.Fatalf("expected %s to contain colon tool instructions, got %q", label, promptText)
 		}
 		if strings.Contains(promptText, "\uff5c") || strings.Contains(promptText, "full"+"width vertical bar") {
 			t.Fatalf("expected %s not to contain legacy pipe guidance, got %q", label, promptText)

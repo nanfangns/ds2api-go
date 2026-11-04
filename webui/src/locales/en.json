@@ -145,7 +145,9 @@
         "addKeyAction": "Add key",
         "editKeyLoading": "Saving...",
         "editKeyAction": "Save changes",
-        "editAccountHint": "Only name and remark can be changed here. The account identifier stays the same.",
+        "editAccountHint": "The account identifier stays the same.",
+        "deviceIDOptional": "Device token (optional)",
+        "deviceIDKeep": "Leave blank to keep the current token",
         "accountIdentifierLabel": "Account identifier",
         "editAccountLoading": "Saving...",
         "editAccountAction": "Save changes",
@@ -175,7 +177,11 @@
         "envModeRiskDesc": "Detected DS2API_CONFIG_JSON. If DS2API_ENV_WRITEBACK is not enabled, Admin UI edits are in-memory only and may be lost after restart.",
         "envModeWritebackPendingTitle": "Env mode + auto-persistence enabled (pending file handoff)",
         "envModeWritebackActiveTitle": "Env mode + auto-persistence active",
-        "envModeWritebackDesc": "The app will auto-create/write the config file and transition to file-backed mode. Current persistence path: {path}"
+        "envModeWritebackDesc": "The app will auto-create/write the config file and transition to file-backed mode. Current persistence path: {path}",
+        "poolStatus_muted": "Muted",
+        "poolStatus_banned": "Banned",
+        "poolReset": "Restore",
+        "poolResetSuccess": "Account restored to pool"
     },
     "proxyManager": {
         "title": "Proxy IPs",

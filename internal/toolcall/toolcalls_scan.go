@@ -30,6 +30,7 @@ type ToolMarkupTag struct {
 	SelfClosing bool
 	DSMLLike    bool
 	Canonical   bool
+	ColonStyle  bool
 }
 
 func ContainsToolMarkupSyntaxOutsideIgnored(text string) (hasDSML, hasCanonical bool) {
@@ -148,6 +149,9 @@ func FindMatchingToolMarkupClose(text string, open ToolMarkupTag) (ToolMarkupTag
 }
 
 func scanToolMarkupTagAt(text string, start int) (ToolMarkupTag, bool) {
+	if start >= 0 && start < len(text) && text[start] == ':' {
+		return scanColonToolMarkupTagAt(text, start)
+	}
 	next, ok := consumeToolMarkupLessThan(text, start)
 	if !ok {
 		return ToolMarkupTag{}, false
@@ -217,6 +221,9 @@ func scanToolMarkupTagAt(text string, start int) (ToolMarkupTag, bool) {
 }
 
 func IsPartialToolMarkupTagPrefix(text string) bool {
+	if strings.HasPrefix(text, ":") {
+		return isPartialColonToolMarkupTagPrefix(text)
+	}
 	if text == "" || text[0] != '<' || strings.Contains(text, ">") || strings.Contains(text, "＞") {
 		return false
 	}

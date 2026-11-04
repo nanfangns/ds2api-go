@@ -17,11 +17,13 @@
 
 语言 / Language: [中文](README.MD) | [English](README.en.md)
 
-将 DeepSeek Web 对话能力转换为 OpenAI、Claude 与 Gemini 兼容 API。核心后端以 **Go** 实现，Vercel 流式桥接额外使用少量 Node Runtime，前端为 React WebUI 管理台（源码在 `webui/`，部署时自动构建到 `static/admin`）。
+将 DeepSeek Web 对话能力转换为 OpenAI、Claude 与 Gemini 兼容 API。核心后端以 **Go** 实现，Vercel 使用容器运行 Go 网关和设备采集器，前端为 React WebUI 管理台（源码在 `webui/`，部署时自动构建到 `static/admin`）。
 
 文档入口：[文档导航](docs/README.md) / [架构说明](docs/ARCHITECTURE.md) / [接口文档](API.md)
 
 【感谢Linux.do社区及GitHub社区各位开发者对项目的支持与贡献】
+
+本分支参考并移植了 [Whale2API](https://github.com/tangsong404/whale2api) 的模型、上下文、图片输入、工具调用、账号状态和设备令牌相关实现。
 
 ## Star History
 
@@ -81,7 +83,6 @@ flowchart LR
             GA["Gemini\n/v1beta/models/* + /v1/models/*"]
             Admin["Admin API\n资源子包"]
             WebUI["WebUI\n/admin（静态托管）"]
-            Vercel["Vercel Node Stream\n/v1/chat/completions"]
         end
 
         subgraph Runtime["运行时核心能力"]
@@ -101,15 +102,12 @@ flowchart LR
     Router --> OA & CA & GA
     Router --> Admin
     Router --> WebUI
-    Router --> Vercel
 
     OA --> Compat
     CA & GA --> Compat
     Compat --> Completion
     Completion -.完整上下文.-> History
     Completion --> Turn
-    Vercel -.Go prepare.-> Completion
-    Vercel -.Node SSE.-> Tool
     Completion --> Auth
     Completion -.账号轮询.-> Pool
     Completion -.工具调用解析.-> Tool
@@ -118,14 +116,13 @@ flowchart LR
     DSClient --> Upstream
     Upstream --> DSClient
     Turn --> Client
-    Vercel --> Client
 ```
 
 详细架构拆分与目录职责见 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
 
 - **后端**：Go（`cmd/ds2api/`、`api/`、`internal/`），不依赖 Python 运行时
 - **前端**：React 管理台（`webui/`），运行时托管静态构建产物
-- **部署**：本地运行、Docker、Vercel Serverless、Linux systemd
+- **部署**：本地运行、Docker、Vercel 容器、Linux systemd
 
 ## 核心能力
 
@@ -135,7 +132,7 @@ flowchart LR
 | Claude 兼容 | `GET /anthropic/v1/models`、`POST /anthropic/v1/messages`、`POST /anthropic/v1/messages/count_tokens`（及快捷路径 `/v1/messages`、`/messages`） |
 | Gemini 兼容 | `POST /v1beta/models/{model}:generateContent`、`POST /v1beta/models/{model}:streamGenerateContent`（及 `/v1/models/{model}:*` 路径） |
 | Ollama 兼容 | `GET /api/version`、`GET /api/tags`、`POST /api/show` |
-| 统一 CORS 兼容 | `/v1/*`、`/anthropic/*`、`/v1beta/models/*`、`/api/*`、`/admin/*` 统一走同一套 CORS 策略；Vercel 上 `/v1/chat/completions` 的 Node Runtime 也对齐相同放行规则，尽量减少第三方预检请求头限制 |
+| 统一 CORS 兼容 | `/v1/*`、`/anthropic/*`、`/v1beta/models/*`、`/api/*`、`/admin/*` 统一走同一套 CORS 策略，尽量减少第三方预检请求头限制 |
 | 多账号轮询 | 自动 token 刷新、邮箱/手机号双登录方式 |
 | 并发队列控制 | 每账号 in-flight 上限 + 等待队列，动态计算建议并发值 |
 | DeepSeek PoW | 纯 Go 高性能实现（DeepSeekHashV1），毫秒级响应 |
@@ -163,6 +160,7 @@ OpenAI `/v1/*` 仍是推荐的规范路径；同时支持 `/models`、`/chat/com
 
 | 模型类型 | 模型 ID | thinking | search |
 | --- | --- | --- | --- |
+| default | `deepseek-flash` | 默认开启，可由请求参数控制 | ❌ |
 | default | `deepseek-v4-flash` | 默认开启，可由请求参数控制 | ❌ |
 | default | `deepseek-v4-flash-nothinking` | 永久关闭，不受请求参数影响 | ❌ |
 | expert | `deepseek-v4-pro` | 默认开启，可由请求参数控制 | ❌ |
@@ -296,7 +294,7 @@ cp config.example.json config.json
 base64 < config.json | tr -d '\n'
 ```
 
-> **流式说明**：OpenAI Chat 流式在 Vercel 上会由 `api/chat-stream.js`（Node Runtime）承接，但 `vercel.json` 只把规范路径 `/v1/chat/completions` 重写到 Node；根路径快捷别名 `/chat/completions` 仍走 Go 主链路。鉴权、账号选择、会话/PoW 准备仍由 Go 内部 prepare 接口完成；流式响应（含 `tools`）在 Node 侧执行与 Go 对齐的输出组装与防泄漏处理。Vercel 上需要实时流式时请使用 `/v1/chat/completions`。
+> **Vercel 说明**：使用 Vercel Services 容器运行 Go 网关，并在容器内运行仅监听本机的设备令牌采集器；流式响应由 Go 直接处理。Vercel Services 目前为 Beta，容器镜像存储和运行资源可能产生费用，冷启动也可能较慢。运行时文件和采集结果不保证跨实例持久保存。
 
 详细部署说明请参阅 [部署指南](docs/DEPLOY.md)。
 
@@ -331,12 +329,17 @@ go run ./cmd/ds2api
 
 - `keys` / `api_keys`：客户端访问密钥，`api_keys` 支持 `name` 与 `remark` 元信息，`keys` 继续兼容。
 - `accounts`：DeepSeek 托管账号，支持 `email` 或 `mobile` 登录，可配置代理、名称和备注。
+- `accounts[].device_id`：可选的账号设备令牌。Vercel 容器默认启动本机采集服务，也可通过 `DEVICE_HARVEST_URL` 对接独立服务（见 `tools/device-harvest`）；环境变量模式下运行时采集结果只保存在当前实例内。
 - `model_aliases`：OpenAI / Claude / Gemini 共用的模型 alias 映射。
 - `runtime`：账号并发、队列与 token 刷新策略，可通过 Admin Settings 热更新。
 - `auto_delete.mode`：请求结束后的远端会话清理策略，支持 `none` / `single` / `all`。
 - `current_input_file`：全局生效的上下文拆分上传策略；默认开启且阈值为 `0`，触发时将完整上下文合并上传为 `DS2API_HISTORY.txt` 上下文文件。
 - 如果关闭 `current_input_file`，请求会直接透传，不上传拆分上下文文件。
 - `thinking_injection`：默认开启；在最新 user 消息末尾追加思考增强提示词，提高高强度推理与工具调用前的思考稳定性；`prompt` 留空时使用内置默认提示词。
+
+`deepseek-flash` 使用上游 `default` 通道，支持图片数据和公网 HTTP(S) 图片 URL。上下文预检默认按 Whale 的 896,000 展示值与 2,850,000 本地估算阈值计算；这是估算保护，不保证上游一定接受相同长度。可通过 `DS2API_USER_FACING_CONTEXT_LIMIT_TOKENS` 和 `DS2API_LOGICAL_CONTEXT_LIMIT_TOKENS` 调整。
+
+上游明确返回账号禁言或封禁时，账号会被暂时移出号池，管理台可查看状态并手动恢复；已知禁言到期后可自动重新使用，未知到期时间时一小时后重试。文件模式将状态写入配置文件，环境变量模式只在当前实例内保存，重启或切换实例可能丢失。
 
 环境变量完整列表见 [部署指南](docs/DEPLOY.md)，接口鉴权规则见 [API.md](API.md#鉴权规则)。
 

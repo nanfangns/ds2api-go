@@ -25,6 +25,57 @@ func newTestResolver(t *testing.T) *Resolver {
 	})
 }
 
+func TestConcurrentLoginWaiterCanCancelWithoutAnotherLogin(t *testing.T) {
+	r := newTestResolver(t)
+	started, release := make(chan struct{}), make(chan struct{})
+	var calls atomic.Int32
+	r.Login = func(context.Context, config.Account) (string, error) {
+		calls.Add(1)
+		close(started)
+		<-release
+		return "fresh-token", nil
+	}
+	acc := config.Account{Email: "acc@example.com", Password: "pwd"}
+	done := make(chan error, 1)
+	go func() {
+		done <- r.loginAndPersist(context.Background(), &RequestAuth{AccountID: acc.Identifier(), Account: acc})
+	}()
+	<-started
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := r.loginAndPersist(ctx, &RequestAuth{AccountID: acc.Identifier(), Account: acc})
+	if !errors.Is(err, context.Canceled) || calls.Load() != 1 {
+		t.Fatalf("expected canceled waiter and one login, calls=%d err=%v", calls.Load(), err)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestFailedAccountSwitchDoesNotReleaseAnotherRequest(t *testing.T) {
+	t.Setenv("DS2API_ACCOUNT_MAX_INFLIGHT", "2")
+	r := newTestResolver(t)
+	request, _ := http.NewRequest(http.MethodPost, "/", nil)
+	request.Header.Set("Authorization", "Bearer managed-key")
+	a, err := r.Determine(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	other, err := r.Determine(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer r.Release(other)
+	if r.SwitchAccount(context.Background(), a) {
+		t.Fatal("expected no alternate account")
+	}
+	r.Release(a)
+	if got := r.Pool.Status()["in_use"]; got != 1 {
+		t.Fatalf("expected the other request to retain its lease, got %v", got)
+	}
+}
+
 func TestDetermineWithXAPIKeyUsesDirectToken(t *testing.T) {
 	r := newTestResolver(t)
 	req, _ := http.NewRequest(http.MethodPost, "/anthropic/v1/messages", nil)

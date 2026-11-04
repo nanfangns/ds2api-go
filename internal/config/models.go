@@ -6,11 +6,13 @@ import (
 )
 
 type ModelInfo struct {
-	ID         string `json:"id"`
-	Object     string `json:"object"`
-	Created    int64  `json:"created"`
-	OwnedBy    string `json:"owned_by"`
-	Permission []any  `json:"permission,omitempty"`
+	ID            string `json:"id"`
+	Object        string `json:"object"`
+	Created       int64  `json:"created"`
+	OwnedBy       string `json:"owned_by"`
+	ContextLength int    `json:"context_length,omitempty"`
+	Multimodal    bool   `json:"multimodal,omitempty"`
+	Permission    []any  `json:"permission,omitempty"`
 }
 type OllamaModelInfo struct {
 	Name       string `json:"name"`
@@ -30,6 +32,7 @@ type ModelAliasReader interface {
 const noThinkingModelSuffix = "-nothinking"
 
 var deepSeekBaseModels = []ModelInfo{
+	{ID: "deepseek-flash", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Multimodal: true, Permission: []any{}},
 	{ID: "deepseek-v4-flash", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Permission: []any{}},
 	{ID: "deepseek-v4-pro", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Permission: []any{}},
 	{ID: "deepseek-v4-flash-search", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Permission: []any{}},
@@ -38,6 +41,8 @@ var deepSeekBaseModels = []ModelInfo{
 }
 
 var OllamaCapabilitiesModels = []OllamaCapabilitiesModelInfo{
+	{ID: "deepseek-flash", Capabilities: []string{"tools", "thinking", "vision"}},
+	{ID: "deepseek-flash-nothinking", Capabilities: []string{"tools", "vision"}},
 	{ID: "deepseek-v4-flash", Capabilities: []string{"tools", "thinking"}},
 	{ID: "deepseek-v4-pro", Capabilities: []string{"tools", "thinking"}},
 	{ID: "deepseek-v4-flash-search", Capabilities: []string{"tools", "thinking"}},
@@ -90,7 +95,7 @@ func GetModelConfig(model string) (thinking bool, search bool, ok bool) {
 		return false, false, false
 	}
 	switch baseModel {
-	case "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-vision":
+	case "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-vision":
 		return !noThinking, false, true
 	case "deepseek-v4-flash-search", "deepseek-v4-pro-search":
 		return !noThinking, true, true
@@ -102,7 +107,7 @@ func GetModelConfig(model string) (thinking bool, search bool, ok bool) {
 func GetModelType(model string) (modelType string, ok bool) {
 	baseModel, _ := splitNoThinkingModel(model)
 	switch baseModel {
-	case "deepseek-v4-flash", "deepseek-v4-flash-search":
+	case "deepseek-flash", "deepseek-v4-flash", "deepseek-v4-flash-search":
 		return "default", true
 	case "deepseek-v4-pro", "deepseek-v4-pro-search":
 		return "expert", true
@@ -257,7 +262,13 @@ func lower(s string) string {
 }
 
 func OpenAIModelsResponse() map[string]any {
-	return map[string]any{"object": "list", "data": DeepSeekModels}
+	models := append([]ModelInfo(nil), DeepSeekModels...)
+	for i := range models {
+		if strings.HasPrefix(models[i].ID, "deepseek-flash") {
+			models[i].ContextLength = EffectiveUserFacingContextLimitTokens
+		}
+	}
+	return map[string]any{"object": "list", "data": models}
 }
 
 func OpenAIModelByID(store ModelAliasReader, id string) (ModelInfo, bool) {
@@ -267,6 +278,9 @@ func OpenAIModelByID(store ModelAliasReader, id string) (ModelInfo, bool) {
 	}
 	for _, model := range DeepSeekModels {
 		if model.ID == canonical {
+			if strings.HasPrefix(model.ID, "deepseek-flash") {
+				model.ContextLength = EffectiveUserFacingContextLimitTokens
+			}
 			return model, true
 		}
 	}

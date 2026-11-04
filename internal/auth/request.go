@@ -36,13 +36,25 @@ type RequestAuth struct {
 
 type LoginFunc func(ctx context.Context, acc config.Account) (string, error)
 
+type tokenRefreshCall struct {
+	done     chan struct{}
+	token    string
+	deviceID string
+	err      error
+}
+
 type Resolver struct {
-	Store *config.Store
-	Pool  *account.Pool
-	Login LoginFunc
+	Store         *config.Store
+	Pool          *account.Pool
+	Login         LoginFunc
+	DeviceHarvest DeviceHarvester
 
 	mu               sync.Mutex
 	tokenRefreshedAt map[string]time.Time
+	harvestMu        sync.Mutex
+	harvestCalls     map[string]*deviceHarvestCall
+	tokenMu          sync.Mutex
+	tokenRefreshes   map[string]*tokenRefreshCall
 }
 
 func NewResolver(store *config.Store, pool *account.Pool, login LoginFunc) *Resolver {
@@ -150,14 +162,53 @@ func FromContext(ctx context.Context) (*RequestAuth, bool) {
 }
 
 func (r *Resolver) loginAndPersist(ctx context.Context, a *RequestAuth) error {
-	token, err := r.Login(ctx, a.Account)
-	if err != nil {
-		return err
+	if a == nil || a.AccountID == "" {
+		return ErrNoAccount
 	}
-	a.Account.Token = token
-	a.DeepSeekToken = token
-	r.markTokenRefreshedNow(a.AccountID)
-	return r.Store.UpdateAccountToken(a.AccountID, token)
+	r.tokenMu.Lock()
+	if r.tokenRefreshes == nil {
+		r.tokenRefreshes = make(map[string]*tokenRefreshCall)
+	}
+	if call := r.tokenRefreshes[a.AccountID]; call != nil {
+		r.tokenMu.Unlock()
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-call.done:
+			if call.err == nil {
+				a.Account.Token, a.DeepSeekToken = call.token, call.token
+				a.Account.DeviceID = call.deviceID
+			}
+			return call.err
+		}
+	}
+	call := &tokenRefreshCall{done: make(chan struct{})}
+	r.tokenRefreshes[a.AccountID] = call
+	r.tokenMu.Unlock()
+
+	token, deviceID, err := r.loginWithDevice(ctx, a.Account)
+	if err != nil {
+		r.RecordAccountFailure(a, []byte(err.Error()))
+	}
+	if err == nil && deviceID != a.Account.DeviceID {
+		err = r.Store.UpdateAccountDeviceID(a.AccountID, deviceID)
+	}
+	if err == nil {
+		err = r.Store.UpdateAccountToken(a.AccountID, token)
+	}
+	if err == nil {
+		r.markTokenRefreshedNow(a.AccountID)
+	}
+	r.tokenMu.Lock()
+	call.token, call.deviceID, call.err = token, deviceID, err
+	delete(r.tokenRefreshes, a.AccountID)
+	close(call.done)
+	r.tokenMu.Unlock()
+	if err == nil {
+		a.Account.Token, a.DeepSeekToken = token, token
+		a.Account.DeviceID = deviceID
+	}
+	return err
 }
 
 func (r *Resolver) RefreshToken(ctx context.Context, a *RequestAuth) bool {
@@ -222,6 +273,9 @@ func (a *RequestAuth) SwitchAccount(ctx context.Context) bool {
 
 func (r *Resolver) Release(a *RequestAuth) {
 	if a == nil || !a.UseConfigToken || a.AccountID == "" {
+		return
+	}
+	if a.TriedAccounts[a.AccountID] {
 		return
 	}
 	r.Pool.Release(a.AccountID)
