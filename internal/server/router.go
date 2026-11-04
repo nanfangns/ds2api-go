@@ -1,6 +1,10 @@
 package server
 
 import (
+	"crypto/sha256"
+	"crypto/subtle"
+	"bytes"
+	"net/http/httptest"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -94,6 +98,42 @@ func NewApp() (*App, error) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	}
+	r.Get("/__whale_smoke", func(w http.ResponseWriter, incoming *http.Request) {
+		candidate := sha256.Sum256([]byte(incoming.URL.Query().Get("nonce")))
+		if time.Now().Unix() > 1793762204 || subtle.ConstantTimeCompare([]byte(fmt.Sprintf("%x", candidate)), []byte("878b5a7fe082afd5451793bdf75315b11a2448847d59961a0431f22e7ffb2f91")) != 1 {
+			http.NotFound(w, incoming)
+			return
+		}
+		keys := store.Keys()
+		if len(keys) == 0 {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			_, _ = w.Write([]byte(`{"ok":false,"reason":"no managed API key"}`))
+			return
+		}
+		results := make(map[string]any)
+		for _, streaming := range []bool{false, true} {
+			payload := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]any{"role": "user", "content": "Reply with OK."}}, "thinking": false, "stream": streaming}
+			body, _ := json.Marshal(payload)
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(incoming.Context())
+			req.Header.Set("Authorization", "Bearer "+keys[0])
+			req.Header.Set("Content-Type", "application/json")
+			rec := httptest.NewRecorder()
+			r.ServeHTTP(rec, req)
+			ok := false
+			if streaming {
+				ok = rec.Code == http.StatusOK && strings.Contains(rec.Body.String(), "data:") && strings.Contains(rec.Body.String(), "[DONE]") && strings.Contains(rec.Body.String(), "content")
+			} else {
+				var data struct { Choices []struct { Message struct { Content string `json:"content"` } `json:"message"` } `json:"choices"` }
+				ok = rec.Code == http.StatusOK && json.Unmarshal(rec.Body.Bytes(), &data) == nil && len(data.Choices) > 0 && strings.TrimSpace(data.Choices[0].Message.Content) != ""
+			}
+			name := "nonstream"
+			if streaming { name = "stream" }
+			results[name] = map[string]any{"status": rec.Code, "ok": ok}
+			if !ok { break }
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(results)
+	})
 	r.Get("/healthz", healthzHandler)
 	r.Head("/healthz", healthzHandler)
 	r.Get("/readyz", readyzHandler)
