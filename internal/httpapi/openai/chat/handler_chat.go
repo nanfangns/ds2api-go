@@ -74,6 +74,10 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if gateErr := completionruntime.ContextGateError(stdReq, h.Store); gateErr != nil {
+		writeOpenAIErrorWithCode(w, gateErr.Status, gateErr.Message, gateErr.Code)
+		return
+	}
 	stdReq, err = h.applyCurrentInputFile(r.Context(), a, stdReq)
 	if err != nil {
 		status, message := mapCurrentInputFileError(err)
