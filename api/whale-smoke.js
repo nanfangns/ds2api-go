@@ -20,7 +20,11 @@ function classify(m) {
   if (/login failed/.test(m)) return 'account_login_failed';
   if (/unauthorized/.test(m)) return 'unauthorized';
   if (/account/.test(m)) return 'account_error';
-  return m ? 'other_error' : 'no_error_message';
+  if (m) {
+    const terms=['device','risk','verify','login','wrong','password','account','invalid','token','unauthor','authorize','create','session','network','timeout','request','missing','proxy','protection','blocked','error','config','busy','connect','certificate'];
+    return 'other_error:' + terms.filter(x => m.includes(x)).join(',');
+  }
+  return 'no_error_message';
 }
 module.exports = async function(req, res) {
   res.setHeader('Content-Type', 'application/json');
@@ -29,12 +33,12 @@ module.exports = async function(req, res) {
   const key = apiKey(readConfig());
   if (!key) { res.statusCode = 503; return res.end(JSON.stringify({ok:false, stage:'configuration', reason:'no managed API key'})); }
   const requestURL = new URL(req.url, 'https://' + req.headers.host);
-  const bypass = String(req.headers['x-vercel-protection-bypass'] || requestURL.searchParams.get('x-vercel-protection-bypass') || '');
+  const bypass = String(req.headers['x-vercel-protection-bypass'] || requestURL.searchParams.get('probe') || requestURL.searchParams.get('x-vercel-protection-bypass') || '');
   const target = new URL('/v1/chat/completions', 'https://' + req.headers.host);
   const headers = {'Content-Type':'application/json', 'Authorization':'Bearer ' + key};
   if (bypass) { headers['x-vercel-protection-bypass'] = bypass; target.searchParams.set('x-vercel-protection-bypass', bypass); }
   const body = {model:'deepseek-flash', messages:[{role:'user',content:'Reply with OK.'}]};
-  const result = {};
+  const result = {bypass_present: Boolean(bypass)};
   try {
     const plain = await fetch(target, {method:'POST',headers,body:JSON.stringify({...body,stream:false}),signal:AbortSignal.timeout(90000)});
     const plainText = await plain.text();
