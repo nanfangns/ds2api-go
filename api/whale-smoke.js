@@ -11,6 +11,17 @@ function apiKey(c) {
   for (const item of (Array.isArray(c.api_keys) ? c.api_keys : [])) if (item && typeof item.key === 'string' && item.key.trim()) return item.key.trim();
   return '';
 }
+function classify(m) {
+  m = String(m || '').toLowerCase();
+  if (/device fingerprint rejected|risk_device_detected/.test(m)) return 'device_risk';
+  if (/password|credential/.test(m)) return 'account_credentials';
+  if (/deployment protection|vercel authentication/.test(m)) return 'vercel_protection';
+  if (/account token is invalid|invalid token/.test(m)) return 'upstream_invalid_token';
+  if (/login failed/.test(m)) return 'account_login_failed';
+  if (/unauthorized/.test(m)) return 'unauthorized';
+  if (/account/.test(m)) return 'account_error';
+  return m ? 'other_error' : 'no_error_message';
+}
 module.exports = async function(req, res) {
   res.setHeader('Content-Type', 'application/json');
   res.setHeader('Cache-Control', 'no-store');
@@ -29,7 +40,17 @@ module.exports = async function(req, res) {
     const plainText = await plain.text();
     let json = {}; try { json=JSON.parse(plainText); } catch (_) {}
     const content = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
-    result.nonstream = {status:plain.status, ok:plain.ok && typeof content === 'string' && content.trim().length > 0, error:json.error && (json.error.code || json.error.type)};
+    result.nonstream = {status:plain.status, ok:plain.ok && typeof content === 'string' && content.trim().length > 0, error:json.error && (json.error.code || json.error.type), reason:classify(json.error && json.error.message)};
+    if (!result.nonstream.ok) {
+      const directTarget = new URL(target);
+      directTarget.searchParams.set('__go', '1');
+      const direct = await fetch(directTarget, {method:'POST',headers,body:JSON.stringify({...body,stream:false}),signal:AbortSignal.timeout(90000)});
+      let directJSON={}; try { directJSON=JSON.parse(await direct.text()); } catch (_) {}
+      result.direct_go = {status:direct.status, reason:classify(directJSON.error && directJSON.error.message)};
+      const prod = await fetch('https://nanfangai.eu.cc/v1/chat/completions', {method:'POST',headers:{'Content-Type':'application/json','Authorization':'Bearer '+key},body:JSON.stringify({...body,stream:false}),signal:AbortSignal.timeout(90000)});
+      let prodJSON={}; try { prodJSON=JSON.parse(await prod.text()); } catch (_) {}
+      result.production_baseline = {status:prod.status, reason:classify(prodJSON.error && prodJSON.error.message)};
+    }
     if (result.nonstream.ok) {
       const stream = await fetch(target, {method:'POST',headers,body:JSON.stringify({...body,stream:true}),signal:AbortSignal.timeout(90000)});
       const text = await stream.text();
