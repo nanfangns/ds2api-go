@@ -1,0 +1,45 @@
+'use strict';
+function readConfig() {
+  const raw = String(process.env.DS2API_CONFIG_JSON || '').trim();
+  for (const value of [raw, Buffer.from(raw, 'base64').toString('utf8')]) {
+    try { return JSON.parse(value); } catch (_) {}
+  }
+  return {};
+}
+function apiKey(c) {
+  for (const k of (Array.isArray(c.keys) ? c.keys : [])) if (typeof k === 'string' && k.trim()) return k.trim();
+  for (const item of (Array.isArray(c.api_keys) ? c.api_keys : [])) if (item && typeof item.key === 'string' && item.key.trim()) return item.key.trim();
+  return '';
+}
+module.exports = async function(req, res) {
+  res.setHeader('Content-Type', 'application/json');
+  res.setHeader('Cache-Control', 'no-store');
+  if (req.method !== 'GET') { res.statusCode = 405; return res.end(JSON.stringify({ok:false})); }
+  const key = apiKey(readConfig());
+  if (!key) { res.statusCode = 503; return res.end(JSON.stringify({ok:false, stage:'configuration', reason:'no managed API key'})); }
+  const requestURL = new URL(req.url, 'https://' + req.headers.host);
+  const bypass = String(req.headers['x-vercel-protection-bypass'] || requestURL.searchParams.get('x-vercel-protection-bypass') || '');
+  const target = new URL('/v1/chat/completions', 'https://' + req.headers.host);
+  const headers = {'Content-Type':'application/json', 'Authorization':'Bearer ' + key};
+  if (bypass) { headers['x-vercel-protection-bypass'] = bypass; target.searchParams.set('x-vercel-protection-bypass', bypass); }
+  const body = {model:'deepseek-flash', messages:[{role:'user',content:'Reply with OK.'}]};
+  const result = {};
+  try {
+    const plain = await fetch(target, {method:'POST',headers,body:JSON.stringify({...body,stream:false}),signal:AbortSignal.timeout(90000)});
+    const plainText = await plain.text();
+    let json = {}; try { json=JSON.parse(plainText); } catch (_) {}
+    const content = json.choices && json.choices[0] && json.choices[0].message && json.choices[0].message.content;
+    result.nonstream = {status:plain.status, ok:plain.ok && typeof content === 'string' && content.trim().length > 0, error:json.error && (json.error.code || json.error.type)};
+    if (result.nonstream.ok) {
+      const stream = await fetch(target, {method:'POST',headers,body:JSON.stringify({...body,stream:true}),signal:AbortSignal.timeout(90000)});
+      const text = await stream.text();
+      result.stream = {status:stream.status, ok:stream.ok && text.includes('data:') && text.includes('[DONE]') && text.includes('"content"')};
+    }
+    result.ok = Boolean(result.nonstream.ok && result.stream && result.stream.ok);
+    res.statusCode = result.ok ? 200 : 502;
+    return res.end(JSON.stringify(result));
+  } catch (_) {
+    res.statusCode=502;
+    return res.end(JSON.stringify({...result,ok:false,reason:'request failed or timed out'}));
+  }
+};

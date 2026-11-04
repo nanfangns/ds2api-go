@@ -8,9 +8,16 @@
     },
     "api/index.go": {
       "maxDuration": 300
+    },
+    "api/whale-smoke.js": {
+      "maxDuration": 300
     }
   },
   "rewrites": [
+    {
+      "source": "/__whale_smoke",
+      "destination": "/api/whale-smoke"
+    },
     {
       "source": "/v1/chat/completions",
       "has": [
