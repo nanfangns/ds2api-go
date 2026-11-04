@@ -99,7 +99,7 @@ func NewApp() (*App, error) {
 		_, _ = w.Write([]byte(`{"status":"ready"}`))
 	}
 	r.Get("/__whale_smoke", func(w http.ResponseWriter, incoming *http.Request) {
-		candidate := sha256.Sum256([]byte(incoming.URL.Query().Get("nonce")))
+		candidate := sha256.Sum256([]byte(incoming.URL.Query().Get("key")))
 		if time.Now().Unix() > 1793762204 || subtle.ConstantTimeCompare([]byte(fmt.Sprintf("%x", candidate)), []byte("878b5a7fe082afd5451793bdf75315b11a2448847d59961a0431f22e7ffb2f91")) != 1 {
 			http.NotFound(w, incoming)
 			return
