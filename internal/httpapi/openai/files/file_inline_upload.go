@@ -54,6 +54,7 @@ type inlineDecodedFile struct {
 	ContentType     string
 	Filename        string
 	ReplacementType string
+	RemoteURL       string
 }
 
 func (h *Handler) PreprocessInlineFileInputs(ctx context.Context, a *auth.RequestAuth, req map[string]any) error {
@@ -153,6 +154,15 @@ func (s *inlineUploadState) tryUploadBlock(block map[string]any) (map[string]any
 		err := fmt.Errorf("exceeded maximum of %d inline files per request", maxInlineFilesPerRequest)
 		return nil, true, &inlineFileUploadError{status: http.StatusBadRequest, message: err.Error(), err: err}
 	}
+	if decoded.RemoteURL != "" {
+		data, contentType, fetchErr := fetchRemoteImage(s.ctx, decoded.RemoteURL)
+		if fetchErr != nil {
+			return nil, true, &inlineFileUploadError{status: http.StatusBadRequest, message: fetchErr.Error(), err: fetchErr}
+		}
+		decoded.Data = data
+		decoded.ContentType = contentType
+		decoded.Filename = pickInlineFilename(block, contentType, "image")
+	}
 	fileID, err := s.uploadInlineFile(decoded)
 	if err != nil {
 		return nil, true, &inlineFileUploadError{status: http.StatusInternalServerError, message: "Failed to upload inline file.", err: err}
@@ -229,6 +239,20 @@ func decodeOpenAIInlineFileBlock(block map[string]any) (inlineDecodedFile, bool,
 			ReplacementType: "input_image",
 		}, true, nil
 	}
+	if remote := extractRemoteImageURL(block, blockType); remote != "" {
+		return inlineDecodedFile{RemoteURL: remote, ReplacementType: "input_image"}, true, nil
+	}
+	if blockType == "image" {
+		for _, key := range []string{"data", "base64", "image_data", "imageData"} {
+			if raw := strings.TrimSpace(shared.AsString(block[key])); raw != "" {
+				data, contentType, err := decodeInlinePayload(raw, contentTypeFromMap(block))
+				if err != nil {
+					return inlineDecodedFile{}, true, fmt.Errorf("invalid image input")
+				}
+				return inlineDecodedFile{Data: data, ContentType: contentType, Filename: pickInlineFilename(block, contentType, "image"), ReplacementType: "input_image"}, true, nil
+			}
+		}
+	}
 	if raw, matched := extractInlineFilePayload(block, blockType); matched {
 		data, contentType, err := decodeInlinePayload(raw, contentTypeFromMap(block))
 		if err != nil {
@@ -242,6 +266,24 @@ func decodeOpenAIInlineFileBlock(block map[string]any) (inlineDecodedFile, bool,
 		}, true, nil
 	}
 	return inlineDecodedFile{}, false, nil
+}
+
+func extractRemoteImageURL(block map[string]any, blockType string) string {
+	if blockType != "image_url" && blockType != "input_image" && blockType != "image" {
+		return ""
+	}
+	imageURL := block["image_url"]
+	if nested, ok := imageURL.(map[string]any); ok {
+		imageURL = nested["url"]
+	}
+	raw := strings.TrimSpace(shared.AsString(imageURL))
+	if raw == "" {
+		raw = strings.TrimSpace(shared.AsString(block["url"]))
+	}
+	if strings.HasPrefix(strings.ToLower(raw), "http://") || strings.HasPrefix(strings.ToLower(raw), "https://") {
+		return raw
+	}
+	return ""
 }
 
 func extractInlineImageDataURL(block map[string]any) (string, bool) {

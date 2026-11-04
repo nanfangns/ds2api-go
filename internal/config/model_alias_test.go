@@ -6,6 +6,21 @@ type mockModelAliasReader map[string]string
 
 func (m mockModelAliasReader) ModelAliases() map[string]string { return m }
 
+func TestWhaleFlashModelUsesDefaultUpstreamAndExposesCapabilities(t *testing.T) {
+	resolved, ok := ResolveModel(nil, "deepseek-flash")
+	if !ok || resolved != "deepseek-flash" {
+		t.Fatalf("unexpected resolved model %q, ok=%v", resolved, ok)
+	}
+	modelType, ok := GetModelType(resolved)
+	if !ok || modelType != "default" {
+		t.Fatalf("unexpected upstream model type %q, ok=%v", modelType, ok)
+	}
+	info, ok := OpenAIModelByID(nil, resolved)
+	if !ok || !info.Multimodal || info.ContextLength != EffectiveUserFacingContextLimitTokens {
+		t.Fatalf("unexpected model info: %+v, ok=%v", info, ok)
+	}
+}
+
 func TestResolveModelDirectDeepSeek(t *testing.T) {
 	got, ok := ResolveModel(nil, "deepseek-v4-flash")
 	if !ok || got != "deepseek-v4-flash" {

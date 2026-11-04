@@ -246,7 +246,6 @@ func replaceGeneratedCurrentInputRefs(existing []string, oldHistoryID, oldToolsI
 	return prependUniqueRefFileIDs(filtered, newHistoryID, newToolsID)
 }
 
-
 // EstimateCurrentInputFileTokens estimates the context replacement performed by
 // ApplyCurrentInputFile without contacting DeepSeek. It is used by the request
 // preflight gate so an oversized transcript is rejected before any upload.
@@ -259,12 +258,22 @@ func EstimateCurrentInputFileTokens(store CurrentInputConfigReader, stdReq promp
 	if latest == "" || len([]rune(latest)) < threshold {
 		return 0, false
 	}
-	historyText := promptcompat.BuildOpenAIHistoryTranscript(stdReq.Messages)
+	historyText := promptcompat.BuildOpenAICurrentInputContextTranscript(stdReq.Messages)
 	if strings.TrimSpace(historyText) == "" {
 		return 0, false
 	}
 	toolsText, _ := promptcompat.BuildOpenAIToolsContextTranscript(stdReq.ToolsRaw, stdReq.ToolChoice)
+	messages := []any{map[string]any{
+		"role":    "user",
+		"content": currentInputFilePrompt(strings.TrimSpace(toolsText) != ""),
+	}}
+	prompt, _ := promptcompat.BuildOpenAIPromptWithToolInstructionsOnly(messages, stdReq.ToolsRaw, "", stdReq.ToolChoice, stdReq.Thinking)
 	model := strings.TrimSpace(stdReq.ResolvedModel)
-	tokens := util.CountPromptTokens(historyText+"\n"+toolsText+"\n"+stdReq.FinalPrompt, model)
+	parts := []string{historyText}
+	if strings.TrimSpace(toolsText) != "" {
+		parts = append(parts, toolsText)
+	}
+	parts = append(parts, prompt)
+	tokens := util.CountPromptTokens(strings.Join(parts, "\n"), model)
 	return tokens, true
 }

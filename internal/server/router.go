@@ -20,6 +20,7 @@ import (
 	"ds2api/internal/chathistory"
 	"ds2api/internal/config"
 	dsclient "ds2api/internal/deepseek/client"
+	"ds2api/internal/deviceharvest"
 	"ds2api/internal/httpapi/admin"
 	"ds2api/internal/httpapi/claude"
 	"ds2api/internal/httpapi/gemini"
@@ -51,6 +52,7 @@ func NewApp() (*App, error) {
 	resolver := auth.NewResolver(store, pool, func(ctx context.Context, acc config.Account) (string, error) {
 		return dsClient.Login(ctx, acc)
 	})
+	resolver.DeviceHarvest = deviceharvest.NewFromEnv()
 	dsClient = dsclient.NewClient(store, resolver)
 	if err := dsClient.PreloadPow(context.Background()); err != nil {
 		config.Logger.Warn("[PoW] init failed", "error", err)

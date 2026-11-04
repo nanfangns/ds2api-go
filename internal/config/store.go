@@ -220,6 +220,19 @@ func (s *Store) UpdateAccountToken(identifier, token string) error {
 	return s.saveLocked()
 }
 
+func (s *Store) UpdateAccountDeviceID(identifier, deviceID string) error {
+	identifier = strings.TrimSpace(identifier)
+	return s.Update(func(cfg *Config) error {
+		for i := range cfg.Accounts {
+			if cfg.Accounts[i].Identifier() == identifier {
+				cfg.Accounts[i].DeviceID = strings.TrimSpace(deviceID)
+				return nil
+			}
+		}
+		return errors.New("account not found")
+	})
+}
+
 func (s *Store) Replace(cfg Config) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

@@ -8,8 +8,8 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const [editingAccount, setEditingAccount] = useState(null)
     const [newKey, setNewKey] = useState({ key: '', name: '', remark: '' })
     const [copiedKey, setCopiedKey] = useState(null)
-    const [newAccount, setNewAccount] = useState({ name: '', remark: '', email: '', mobile: '', password: '' })
-    const [editAccount, setEditAccount] = useState({ name: '', remark: '' })
+    const [newAccount, setNewAccount] = useState({ name: '', remark: '', email: '', mobile: '', password: '', device_id: '' })
+    const [editAccount, setEditAccount] = useState({ name: '', remark: '', device_id: '' })
     const [loading, setLoading] = useState(false)
     const [testing, setTesting] = useState({})
     const [testingAll, setTestingAll] = useState(false)
@@ -44,14 +44,14 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const openAddAccount = () => {
         setShowEditAccount(false)
         setEditingAccount(null)
-        setEditAccount({ name: '', remark: '' })
-        setNewAccount({ name: '', remark: '', email: '', mobile: '', password: '' })
+        setEditAccount({ name: '', remark: '', device_id: '' })
+        setNewAccount({ name: '', remark: '', email: '', mobile: '', password: '', device_id: '' })
         setShowAddAccount(true)
     }
 
     const closeAddAccount = () => {
         setShowAddAccount(false)
-        setNewAccount({ name: '', remark: '', email: '', mobile: '', password: '' })
+        setNewAccount({ name: '', remark: '', email: '', mobile: '', password: '', device_id: '' })
     }
 
     const openEditAccount = (account) => {
@@ -67,6 +67,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
         setEditAccount({
             name: account?.name || '',
             remark: account?.remark || '',
+            device_id: '',
         })
         setShowEditAccount(true)
     }
@@ -74,7 +75,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
     const closeEditAccount = () => {
         setShowEditAccount(false)
         setEditingAccount(null)
-        setEditAccount({ name: '', remark: '' })
+        setEditAccount({ name: '', remark: '', device_id: '' })
     }
 
     const addKey = async () => {
@@ -168,7 +169,7 @@ export function useAccountActions({ apiFetch, t, onMessage, onRefresh, config, f
             const res = await apiFetch(`/admin/accounts/${encodeURIComponent(identifier)}`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(editAccount),
+                body: JSON.stringify({ name: editAccount.name, remark: editAccount.remark, ...(editAccount.device_id.trim() ? { device_id: editAccount.device_id.trim() } : {}) }),
             })
             if (res.ok) {
                 onMessage('success', t('accountManager.updateAccountSuccess'))

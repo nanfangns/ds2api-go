@@ -15,19 +15,9 @@ import (
 
 func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) {
 	clients := c.requestClientsForAccount(acc)
-	payload := map[string]any{
-		"password":  strings.TrimSpace(acc.Password),
-		"device_id": "deepseek_to_api",
-		"os":        "android",
-	}
-	if email := strings.TrimSpace(acc.Email); email != "" {
-		payload["email"] = email
-	} else if mobile := strings.TrimSpace(acc.Mobile); mobile != "" {
-		loginMobile, areaCode := normalizeMobileForLogin(mobile)
-		payload["mobile"] = loginMobile
-		payload["area_code"] = areaCode
-	} else {
-		return "", errors.New("missing email/mobile")
+	payload, err := loginPayload(acc)
+	if err != nil {
+		return "", err
 	}
 	resp, err := c.postJSON(ctx, clients.regular, clients.fallback, dsprotocol.DeepSeekLoginURL, dsprotocol.BaseHeaders, payload)
 	if err != nil {
@@ -38,7 +28,12 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 		return "", fmt.Errorf("login failed: %v", resp["msg"])
 	}
 	data, _ := resp["data"].(map[string]any)
-	if intFrom(data["biz_code"]) != 0 {
+	bizCode := intFrom(data["biz_code"])
+	bizMessage := fmt.Sprint(data["biz_msg"])
+	if bizCode == 11 || strings.Contains(strings.ToUpper(bizMessage), "RISK_DEVICE_DETECTED") {
+		return "", &RequestFailure{Op: "login", Kind: FailureDeviceRejected, Message: "device fingerprint rejected"}
+	}
+	if bizCode != 0 {
 		return "", fmt.Errorf("login failed: %v", data["biz_msg"])
 	}
 	bizData, _ := data["biz_data"].(map[string]any)
@@ -48,6 +43,28 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 		return "", errors.New("missing login token")
 	}
 	return token, nil
+}
+
+func loginPayload(acc config.Account) (map[string]any, error) {
+	deviceID := strings.TrimSpace(acc.DeviceID)
+	if deviceID == "" {
+		deviceID = "deepseek_to_api"
+	}
+	payload := map[string]any{
+		"password":  strings.TrimSpace(acc.Password),
+		"device_id": deviceID,
+		"os":        "android",
+	}
+	if email := strings.TrimSpace(acc.Email); email != "" {
+		payload["email"] = email
+	} else if mobile := strings.TrimSpace(acc.Mobile); mobile != "" {
+		loginMobile, areaCode := normalizeMobileForLogin(mobile)
+		payload["mobile"] = loginMobile
+		payload["area_code"] = areaCode
+	} else {
+		return nil, errors.New("missing email/mobile")
+	}
+	return payload, nil
 }
 
 func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAttempts int) (string, error) {

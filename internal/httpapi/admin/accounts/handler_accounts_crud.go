@@ -66,6 +66,7 @@ func (h *Handler) listAccounts(w http.ResponseWriter, r *http.Request) {
 			"mobile":        acc.Mobile,
 			"proxy_id":      acc.ProxyID,
 			"has_password":  acc.Password != "",
+			"has_device_id": strings.TrimSpace(acc.DeviceID) != "",
 			"has_token":     token != "",
 			"token_preview": maskSecretPreview(token),
 			"test_status":   testStatus,
@@ -121,6 +122,7 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 	}
 	name, nameOK := fieldStringOptional(req, "name")
 	remark, remarkOK := fieldStringOptional(req, "remark")
+	deviceID, deviceIDOK := fieldStringOptional(req, "device_id")
 
 	err := h.Store.Update(func(c *config.Config) error {
 		for i, acc := range c.Accounts {
@@ -132,6 +134,9 @@ func (h *Handler) updateAccount(w http.ResponseWriter, r *http.Request) {
 			}
 			if remarkOK {
 				c.Accounts[i].Remark = remark
+			}
+			if deviceIDOK {
+				c.Accounts[i].DeviceID = deviceID
 			}
 			return nil
 		}

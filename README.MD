@@ -23,6 +23,8 @@
 
 【感谢Linux.do社区及GitHub社区各位开发者对项目的支持与贡献】
 
+本分支参考并移植了 [Whale2API](https://github.com/tangsong404/whale2api) 的模型、上下文、图片输入及设备令牌相关实现。
+
 ## Star History
 
 <a href="https://www.star-history.com/?repos=cjackhwang%2Fds2api&type=date&legend=top-left">
@@ -163,6 +165,7 @@ OpenAI `/v1/*` 仍是推荐的规范路径；同时支持 `/models`、`/chat/com
 
 | 模型类型 | 模型 ID | thinking | search |
 | --- | --- | --- | --- |
+| default | `deepseek-flash` | 默认开启，可由请求参数控制 | ❌ |
 | default | `deepseek-v4-flash` | 默认开启，可由请求参数控制 | ❌ |
 | default | `deepseek-v4-flash-nothinking` | 永久关闭，不受请求参数影响 | ❌ |
 | expert | `deepseek-v4-pro` | 默认开启，可由请求参数控制 | ❌ |
@@ -331,12 +334,15 @@ go run ./cmd/ds2api
 
 - `keys` / `api_keys`：客户端访问密钥，`api_keys` 支持 `name` 与 `remark` 元信息，`keys` 继续兼容。
 - `accounts`：DeepSeek 托管账号，支持 `email` 或 `mobile` 登录，可配置代理、名称和备注。
+- `accounts[].device_id`：可选的账号设备令牌。设置 `DEVICE_HARVEST_URL` 后可对接独立采集服务（见 `tools/device-harvest`）；Vercel 不会自动运行该浏览器服务，且环境变量模式下运行时采集结果只保存在当前实例内。
 - `model_aliases`：OpenAI / Claude / Gemini 共用的模型 alias 映射。
 - `runtime`：账号并发、队列与 token 刷新策略，可通过 Admin Settings 热更新。
 - `auto_delete.mode`：请求结束后的远端会话清理策略，支持 `none` / `single` / `all`。
 - `current_input_file`：全局生效的上下文拆分上传策略；默认开启且阈值为 `0`，触发时将完整上下文合并上传为 `DS2API_HISTORY.txt` 上下文文件。
 - 如果关闭 `current_input_file`，请求会直接透传，不上传拆分上下文文件。
 - `thinking_injection`：默认开启；在最新 user 消息末尾追加思考增强提示词，提高高强度推理与工具调用前的思考稳定性；`prompt` 留空时使用内置默认提示词。
+
+`deepseek-flash` 使用上游 `default` 通道，支持图片数据和公网 HTTP(S) 图片 URL。上下文预检默认按 Whale 的 896,000 展示值与 2,850,000 本地估算阈值计算；这是估算保护，不保证上游一定接受相同长度。可通过 `DS2API_USER_FACING_CONTEXT_LIMIT_TOKENS` 和 `DS2API_LOGICAL_CONTEXT_LIMIT_TOKENS` 调整。
 
 环境变量完整列表见 [部署指南](docs/DEPLOY.md)，接口鉴权规则见 [API.md](API.md#鉴权规则)。
 

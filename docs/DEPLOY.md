@@ -298,6 +298,10 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # 个人账号可留空
 | `DS2API_ENV_WRITEBACK` | 检测到 `DS2API_CONFIG_JSON` 时自动写入 `DS2API_CONFIG_PATH`，并在成功后转为文件模式（`1/true/yes/on`） | 关闭 |
 | `DS2API_VERCEL_INTERNAL_SECRET` | 混合流式内部鉴权 | 回退用 `DS2API_ADMIN_KEY` |
 | `DS2API_VERCEL_STREAM_LEASE_TTL_SECONDS` | 流式 lease TTL | `900` |
+| `DS2API_USER_FACING_CONTEXT_LIMIT_TOKENS` | 上下文预检对客户端展示的估算上限 | `896000` |
+| `DS2API_LOGICAL_CONTEXT_LIMIT_TOKENS` | 本地分词估算上限 | `2850000` |
+| `DEVICE_HARVEST_URL` | 可选的独立设备令牌采集服务地址 | 未配置 |
+| `DEVICE_HARVEST_TOKEN` | 采集服务的认证令牌 | 未配置 |
 | `DS2API_RAW_STREAM_SAMPLE_ROOT` | raw stream 样本保存/读取根目录 | `tests/raw_stream_samples` |
 | `DS2API_STATIC_ADMIN_DIR` | WebUI 静态资源目录 | `static/admin` |
 | `DS2API_AUTO_BUILD_WEBUI` | 本地启动时是否自动构建缺失的 WebUI（`1/true/yes/on` 或 `0/false/no/off`） | 非 Vercel 默认开启 |

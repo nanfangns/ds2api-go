@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"ds2api/internal/auth"
+	"ds2api/internal/completionruntime"
 	"ds2api/internal/config"
 	"ds2api/internal/httpapi/openai/history"
 	"ds2api/internal/promptcompat"

@@ -458,3 +458,8 @@ Parameters: ...
 
 - 内部主链路变化，至少更新本文档
 - 外部可见契约变化，再同步更新 API 文档
+# 上下文预检与图片输入
+
+OpenAI Chat、Responses、Claude 和 Gemini 在上传历史文件前按最终历史、工具说明及续写提示估算上下文大小；超限时返回 400。Vercel 的 OpenAI 流式准备路径使用相同预检。展示阈值和本地估算阈值可分别通过 `DS2API_USER_FACING_CONTEXT_LIMIT_TOKENS` 与 `DS2API_LOGICAL_CONTEXT_LIMIT_TOKENS` 配置，估算不等于上游实际分词结果。
+
+OpenAI 图片输入支持内嵌数据和公网 HTTP(S) URL。服务下载远程图片后沿用文件上传和引用流程；限制体积、超时、跳转及内网地址，以防访问内部网络。工具可用时，提示模型实际调用工具，避免把口头声称当成执行结果，同时允许无需工具的正常答复。

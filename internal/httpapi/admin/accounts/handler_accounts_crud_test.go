@@ -56,7 +56,7 @@ func TestListAccountsPageSizeAbove5000ClampedTo5000(t *testing.T) {
 
 func TestUpdateAccountMetadataPreservesCredentials(t *testing.T) {
 	h := newAdminTestHandler(t, `{
-		"accounts":[{"email":"u@example.com","name":"old name","remark":"old remark","password":"secret"}]
+		"accounts":[{"email":"u@example.com","name":"old name","remark":"old remark","password":"secret","device_id":"device-token"}]
 	}`)
 
 	r := chi.NewRouter()
@@ -84,6 +84,9 @@ func TestUpdateAccountMetadataPreservesCredentials(t *testing.T) {
 	}
 	if acc.Password != "secret" {
 		t.Fatalf("password should be preserved, got %#v", acc)
+	}
+	if acc.DeviceID != "device-token" {
+		t.Fatal("device token should be preserved when omitted from an update")
 	}
 }
 
