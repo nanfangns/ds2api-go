@@ -381,6 +381,16 @@ async function runServe(argv) {
       /* keep '/' */
     }
 
+    if (pathname === '/probe' && req.method === 'GET') {
+      try {
+        const result = await limiter.run(() => harvestOnce(browser, { accountId: 'connectivity-probe' }));
+        sendJSON(res, 200, { ok: typeof result.token === 'string' && result.token.startsWith('B') });
+      } catch (_err) {
+        sendJSON(res, 502, { ok: false, reason: 'harvest failed' });
+      }
+      return;
+    }
+
     if (pathname === '/healthz') {
       if (req.method !== 'GET' && req.method !== 'HEAD') {
         sendJSON(res, 405, { error: 'method not allowed' });
