@@ -79,6 +79,10 @@ func (h *Handler) handleGeminiDirect(w http.ResponseWriter, r *http.Request, str
 		return true
 	}
 	defer h.Auth.Release(a)
+	if gateErr := completionruntime.ContextGateError(stdReq, h.Store); gateErr != nil {
+		writeGeminiError(w, gateErr.Status, gateErr.Message)
+		return true
+	}
 	stdReq, err = h.applyCurrentInputFile(r.Context(), a, stdReq)
 	if err != nil {
 		status, message := mapCurrentInputFileError(err)
