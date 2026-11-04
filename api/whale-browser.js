@@ -1,5 +1,4 @@
 'use strict';
-const chromiumBinary = require('@sparticuz/chromium');
 const { chromium } = require('playwright-core');
 function config() {
   const raw=String(process.env.DS2API_CONFIG_JSON || '').trim();
@@ -12,6 +11,7 @@ module.exports=async function(req,res) {
   if(req.method!=='GET'){res.statusCode=405;return res.end(JSON.stringify({ok:false}));}
   let browser; let stage='launch';
   try {
+    const {default: chromiumBinary} = await import('@sparticuz/chromium');
     browser=await chromium.launch({executablePath:await chromiumBinary.executablePath(),headless:true,ignoreDefaultArgs:['--enable-automation'],args:[...chromiumBinary.args,'--disable-blink-features=AutomationControlled']});
     stage='page';
     const ctx=await browser.newContext({viewport:{width:1440,height:900},locale:'zh-CN',timezoneId:'Asia/Shanghai',serviceWorkers:'block'});
