@@ -92,6 +92,5 @@ func ContextGateError(stdReq promptcompat.StandardRequest, currentInputConfig hi
 		Status:  http.StatusBadRequest,
 		Message: contextLengthExceededMessage(stdReq, estimated),
 		Code:    "invalid_request_error",
-		Param:   "",
 	}
 }
