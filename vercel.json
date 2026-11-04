@@ -11,9 +11,16 @@
     },
     "api/whale-smoke.js": {
       "maxDuration": 300
+    },
+    "api/whale-browser.js": {
+      "maxDuration": 300
     }
   },
   "rewrites": [
+    {
+      "source": "/__whale_browser",
+      "destination": "/api/whale-browser"
+    },
     {
       "source": "/__whale_smoke",
       "destination": "/api/whale-smoke"
