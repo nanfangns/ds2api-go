@@ -11,6 +11,7 @@ import (
 	dsclient "ds2api/internal/deepseek/client"
 	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
+	"ds2api/internal/util"
 )
 
 const (
