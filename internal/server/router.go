@@ -114,7 +114,7 @@ func NewApp() (*App, error) {
 		for _, streaming := range []bool{false, true} {
 			payload := map[string]any{"model": "deepseek-flash", "messages": []any{map[string]any{"role": "user", "content": "Reply with OK."}}, "thinking": false, "stream": streaming}
 			body, _ := json.Marshal(payload)
-			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body)).WithContext(incoming.Context())
+			req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", bytes.NewReader(body))
 			req.Header.Set("Authorization", "Bearer "+keys[0])
 			req.Header.Set("Content-Type", "application/json")
 			rec := httptest.NewRecorder()
