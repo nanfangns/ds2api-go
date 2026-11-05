@@ -165,6 +165,9 @@ func (s *inlineUploadState) tryUploadBlock(block map[string]any) (map[string]any
 	}
 	fileID, err := s.uploadInlineFile(decoded)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return nil, true, &inlineFileUploadError{status: http.StatusServiceUnavailable, message: "The DeepSeek account is restricted; check its status with DeepSeek.", err: err}
+		}
 		return nil, true, &inlineFileUploadError{status: http.StatusInternalServerError, message: "Failed to upload inline file.", err: err}
 	}
 	s.uploadCount++

@@ -8,8 +8,10 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"time"
 	"unicode"
 
+	"ds2api/internal/accounthealth"
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 )
@@ -49,7 +51,7 @@ func (c *Client) Login(ctx context.Context, acc config.Account) (string, error) 
 func loginPayload(acc config.Account) (map[string]any, error) {
 	deviceID := strings.TrimSpace(acc.DeviceID)
 	if deviceID == "" {
-		deviceID = "deepseek_to_api"
+		config.Logger.Warn("[login] account has no device token; DeepSeek may reject the login", "account", acc.Identifier())
 	}
 	payload := map[string]any{
 		"password":  strings.TrimSpace(acc.Password),
@@ -90,23 +92,16 @@ func (c *Client) CreateSession(ctx context.Context, a *auth.RequestAuth, maxAtte
 				return sessionID, nil
 			}
 		}
-		if c.Auth != nil {
-			if raw, marshalErr := json.Marshal(resp); marshalErr == nil {
-				c.Auth.RecordAccountFailure(a, raw)
-			}
+		if restriction := c.accountRestriction(a, resp, "create session"); restriction != nil {
+			return "", restriction
 		}
 		config.Logger.Warn("[create_session] failed", "status", status, "code", code, "biz_code", bizCode, "msg", msg, "biz_msg", bizMsg, "use_config_token", a.UseConfigToken, "account", a.AccountID)
-		if a.UseConfigToken {
+		if a.UseConfigToken && c.Auth != nil {
 			if !refreshed && shouldAttemptRefresh(status, code, bizCode, msg, bizMsg) {
 				if c.Auth.RefreshToken(ctx, a) {
 					refreshed = true
 					continue
 				}
-			}
-			if c.Auth.SwitchAccount(ctx, a) {
-				refreshed = false
-				attempts++
-				continue
 			}
 		}
 		attempts++
@@ -153,10 +148,8 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 			}
 			return BuildPowHeader(challenge, answer)
 		}
-		if c.Auth != nil {
-			if raw, marshalErr := json.Marshal(resp); marshalErr == nil {
-				c.Auth.RecordAccountFailure(a, raw)
-			}
+		if restriction := c.accountRestriction(a, resp, "get pow"); restriction != nil {
+			return "", restriction
 		}
 		config.Logger.Warn("[get_pow] failed", "status", status, "code", code, "biz_code", bizCode, "msg", msg, "biz_msg", bizMsg, "use_config_token", a.UseConfigToken, "account", a.AccountID, "target_path", targetPath)
 		lastFailureMessage = failureMessage(msg, bizMsg, "get pow failed")
@@ -165,17 +158,12 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 		} else {
 			lastFailureKind = FailureUnknown
 		}
-		if a.UseConfigToken {
+		if a.UseConfigToken && c.Auth != nil {
 			if !refreshed && shouldAttemptRefresh(status, code, bizCode, msg, bizMsg) {
 				if c.Auth.RefreshToken(ctx, a) {
 					refreshed = true
 					continue
 				}
-			}
-			if c.Auth.SwitchAccount(ctx, a) {
-				refreshed = false
-				attempts++
-				continue
 			}
 		}
 		attempts++
@@ -184,6 +172,23 @@ func (c *Client) GetPowForTarget(ctx context.Context, a *auth.RequestAuth, targe
 		return "", &RequestFailure{Op: "get pow", Kind: lastFailureKind, Message: lastFailureMessage}
 	}
 	return "", errors.New("get pow failed")
+}
+
+// A session, PoW, and uploaded file all belong to the same account. Account
+// selection is handled by the request runtime, never inside these operations.
+func (c *Client) accountRestriction(a *auth.RequestAuth, resp map[string]any, op string) error {
+	raw, err := json.Marshal(resp)
+	if err != nil {
+		return nil
+	}
+	status, _ := accounthealth.Classify(raw, time.Now())
+	if status == "" {
+		return nil
+	}
+	if c.Auth != nil {
+		c.Auth.RecordAccountFailure(a, raw)
+	}
+	return &RequestFailure{Op: op, Kind: FailureAccountRestricted, Message: "DeepSeek reports this account is " + status + "; check its status with DeepSeek"}
 }
 
 func (c *Client) authHeaders(token string) map[string]string {

@@ -16,9 +16,6 @@ Docs: [Overview](README.en.md) / [Architecture](docs/ARCHITECTURE.en.md) / [Depl
 - [Route Index](#route-index)
 - [Health Endpoints](#health-endpoints)
 - [OpenAI-Compatible API](#openai-compatible-api)
-- [Claude-Compatible API](#claude-compatible-api)
-- [Gemini-Compatible API](#gemini-compatible-api)
-- [Ollama API](#ollama-api)
 - [Admin API](#admin-api)
 - [Error Payloads](#error-payloads)
 - [cURL Examples](#curl-examples)
@@ -27,25 +24,7 @@ Docs: [Overview](README.en.md) / [Architecture](docs/ARCHITECTURE.en.md) / [Depl
 
 ## Basics
 
-| Item | Details |
-| --- | --- |
-| Base URL | `http://localhost:5001` or your deployment domain |
-| Default Content-Type | `application/json` |
-| Health probes | `GET /healthz`, `GET /readyz` |
-| CORS | Enabled (uniformly covers `/v1/*`, `/anthropic/*`, `/v1beta/models/*`, `/api/*`, and `/admin/*`; echoes the browser `Origin` when present, otherwise `*`; default allow-list includes `Content-Type`, `Authorization`, `X-API-Key`, `X-Ds2-Target-Account`, `X-Ds2-Source`, `X-Vercel-Protection-Bypass`, `X-Goog-Api-Key`, `Anthropic-Version`, `Anthropic-Beta`, and also accepts third-party preflight-requested headers such as `x-stainless-*`; `/v1/chat/completions` on Vercel Node Runtime matches the same behavior; internal-only `X-Ds2-Internal-Token` remains blocked) |
-
-- All JSON request bodies must be valid UTF-8; malformed byte sequences are rejected on ingress with `400 invalid json`.
-
-### 3.0 Adapter-Layer Notes
-
-- OpenAI / Claude / Gemini protocols are now mounted on one shared `chi` router tree assembled in `internal/server/router.go`.
-- Adapter responsibilities are streamlined to: **request normalization → DeepSeek invocation → protocol-shaped rendering**, reducing legacy split-logic paths.
-- Tool-calling semantics are aligned between Go and Node runtime: models should output the halfwidth-pipe DSML shell `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`; DS2API also accepts DSML wrapper aliases such as `<dsml|tool_calls>` and `<|tool_calls>`, common DSML separator drift such as `<|DSML tool_calls>`, collapsed DSML local names such as `<DSMLtool_calls>`, control-separator drift such as `<DSML␂tool_calls>` / raw STX `\x02`, CJK angle bracket, fullwidth-bang / ideographic-comma separator drift, PascalCase local-name drift, and trailing attribute separator drift such as `<DSM|parameter name="command"|>...〈/DSM|parameter〉`, `<！DSML！invoke name=“Bash”>`, `<、DSML、tool_calls>`, `<DSmartToolCalls>`, or `<DSMLtool_calls※>`, arbitrary protocol prefixes such as `<proto💥tool_calls>`, and legacy canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`. The scanner normalizes fixed local names (`tool_calls` / `invoke` / `parameter`) with non-structural separators before or after them back to XML before parsing, and also tolerates CDATA opener drift such as `<！[CDATA[` / `<、[CDATA[`; only wrapped tool blocks or the narrow missing-opening-wrapper repair path enter the tool path, while bare `<invoke>` does not count as supported syntax. JSON literal parameter bodies are preserved as structured values, explicit empty or whitespace-only parameters are preserved as empty strings, malformed complete wrappers are released as plain text, and loose CDATA is narrowly repaired at final parse/flush when it can preserve a complete outer tool call.
-- `Admin API` separates static config from runtime policy: `/admin/config*` for configuration state, `/admin/settings*` for runtime behavior.
-- When upstream returns a thinking-only response with no visible text, the Go main path and the Vercel Node streaming path retry once in the same DeepSeek session: it appends the prompt suffix `"Previous reply had no visible output. Please regenerate the visible final answer or tool call now."` and sets `parent_message_id`. If that same-account retry would still end as `429 upstream_empty_output`, managed-account mode switches to the next available account, creates a fresh session, and retries the original payload once before returning 429.
-- Citation/reference marker boundary: streaming output hides upstream `[citation:N]` / `[reference:N]` placeholders by default; non-stream output converts DeepSeek search reference markers into Markdown links.
-
----
+The base URL is `http://localhost:5001` or your deployment domain. Health endpoints are `GET /healthz` and `GET /readyz`. Business endpoints use the OpenAI-compatible protocol and JSON request bodies must be valid UTF-8. See [prompt compatibility](docs/prompt-compatibility.md) for context and account handling.
 
 ## Configuration Best Practice
 
@@ -71,7 +50,7 @@ For Vercel one-click bootstrap, you can set only `DS2API_ADMIN_KEY` first, then 
 
 ## Authentication
 
-### Business Endpoints (`/v1/*`, `/anthropic/*`, `/v1beta/models/*`)
+### Business Endpoints (`/v1/*`)
 
 Two header formats accepted:
 
@@ -79,7 +58,6 @@ Two header formats accepted:
 | --- | --- |
 | Bearer Token | `Authorization: Bearer <token>` |
 | API Key Header | `x-api-key: <token>` (no `Bearer` prefix) |
-| Gemini-compatible | `x-goog-api-key: <token>` or `?key=<token>` / `?api_key=<token>` |
 
 **Auth behavior**:
 
@@ -87,7 +65,6 @@ Two header formats accepted:
 - Token is not in `config.keys` → **Direct token mode**: treated as a DeepSeek token directly
 
 **Optional header**: `X-Ds2-Target-Account: <email_or_mobile>` — Pin a specific managed account; if the target account does not exist or the managed-account queue is exhausted, the request returns `429`, and current responses do not include `Retry-After`. If the account exists but login/refresh fails, the request returns the underlying `401` or upstream error. Without a pinned target, managed-account completion requests try one alternate-account fresh retry before returning an empty-output 429; pinned-target requests and requests with no other available account do not switch.
-Gemini-compatible clients can also send `x-goog-api-key`, `?key=`, or `?api_key=` as the caller credential source.
 
 ### Admin Endpoints (`/admin/*`)
 
@@ -108,27 +85,13 @@ Gemini-compatible clients can also send `x-goog-api-key`, `?key=`, or `?api_key=
 | GET | `/readyz` | None | Readiness probe |
 | HEAD | `/readyz` | None | Readiness probe (no body) |
 | GET | `/v1/models` | None | OpenAI model list |
-| GET | `/v1/models/{id}` | None | OpenAI single-model query (alias accepted) |
+| GET | `/v1/models/{id}` | None | OpenAI single-model query  |
 | POST | `/v1/chat/completions` | Business | OpenAI chat completions |
 | POST | `/v1/responses` | Business | OpenAI Responses API (stream/non-stream) |
 | GET | `/v1/responses/{response_id}` | Business | Query stored response (in-memory TTL) |
 | POST | `/v1/embeddings` | Business | OpenAI Embeddings API |
 | POST | `/v1/files` | Business | OpenAI Files upload (multipart/form-data) |
 | GET | `/v1/files/{file_id}` | Business | Retrieve uploaded file status |
-| GET | `/anthropic/v1/models` | None | Claude model list |
-| POST | `/anthropic/v1/messages` | Business | Claude messages |
-| POST | `/anthropic/v1/messages/count_tokens` | Business | Claude token counting |
-| POST | `/v1/messages` | Business | Claude shortcut path |
-| POST | `/messages` | Business | Claude shortcut path |
-| POST | `/v1/messages/count_tokens` | Business | Claude token counting shortcut |
-| POST | `/messages/count_tokens` | Business | Claude token counting shortcut |
-| POST | `/v1beta/models/{model}:generateContent` | Business | Gemini non-stream |
-| POST | `/v1beta/models/{model}:streamGenerateContent` | Business | Gemini stream |
-| POST | `/v1/models/{model}:generateContent` | Business | Gemini non-stream compat path |
-| POST | `/v1/models/{model}:streamGenerateContent` | Business | Gemini stream compat path |
-| GET | `/api/version` | None | Ollama version endpoint |
-| GET | `/api/tags` | None | Ollama model list |
-| POST | `/api/show` | None | Ollama model capability query (returns `id` + `capabilities`) |
 | POST | `/admin/login` | None | Admin login |
 | GET | `/admin/verify` | JWT | Verify admin JWT |
 | GET | `/admin/vercel/config` | Admin | Read preconfigured Vercel creds |
@@ -198,56 +161,11 @@ OpenAI `/v1/*` paths are canonical. For clients configured with the bare DS2API 
 
 ### `GET /v1/models`
 
-No auth required. Returns the currently supported DeepSeek native model list.
-
-**Response**:
-
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "deepseek-v4-flash", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-vision", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-vision-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
-  ]
-}
-```
-
-> Note: `/v1/models` returns normalized DeepSeek native model IDs. Common aliases are accepted only as request input and are not expanded as separate items in this endpoint.
-
-### Model Alias Resolution
-
-For `chat` / `responses` / `embeddings`, DS2API follows a wide-input/strict-output policy:
-
-1. Match DeepSeek native model IDs first.
-2. Then match exact keys in `model_aliases`.
-3. If the request name ends with `-nothinking`, resolve the base alias and append the corresponding no-thinking variant.
-4. If still unmatched, return `invalid_request_error`. Unknown model families are not guessed heuristically; add explicit compatibility names through `model_aliases`.
-
-Built-in aliases come from `internal/config/models.go`; `config.model_aliases` can override or add mappings at runtime. Excerpt:
-
-- OpenAI / Codex: `gpt-4o`, `gpt-4.1`, `gpt-5`, `gpt-5.5`, `gpt-5-codex`, `gpt-5.3-codex`, `codex-mini-latest`
-- OpenAI reasoning: `o1`, `o3`, `o3-deep-research`, `o4-mini`
-- Claude: `claude-opus-4-6`, `claude-sonnet-4-6`, `claude-haiku-4-5`, `claude-3-5-sonnet-latest`
-- Gemini: `gemini-2.5-pro`, `gemini-2.5-flash`, `gemini-3.1-pro`, `gemini-3-pro`, `gemini-3-flash`, `gemini-3.1-flash-lite`, `gemini-pro-vision`
-- Other exact built-in aliases: `llama-3.1-70b-instruct`, `qwen-max`
-
-Aliases with a `-nothinking` suffix also map to the corresponding forced no-thinking DeepSeek model.
-
-Current vision support resolves only to `deepseek-v4-vision` and does not expose a separate `vision-search` variant.
-
-Retired historical families such as `claude-1.*`, `claude-2.*`, `claude-instant-*`, and `gpt-3.5*` are explicitly rejected.
+No authentication is required. Only `deepseek-flash` is listed or accepted as a model ID. Old models, aliases and `-nothinking` IDs are no longer supported. Thinking is enabled by default; set `"thinking": false` in a request to disable it.
 
 ### `POST /v1/chat/completions`
 
-> Path note: besides the canonical `/v1/chat/completions`, DS2API also accepts the root shortcut `/chat/completions`. On Vercel Runtime, `vercel.json` rewrites only the canonical `/v1/chat/completions` path to the Node streaming bridge; the root shortcut stays on the Go primary path. Use `/v1/chat/completions` on Vercel when real-time streaming is required.
+> Path note: `/chat/completions` is also supported; both paths stream through the Go gateway.
 
 **Headers**:
 
@@ -260,7 +178,7 @@ Content-Type: application/json
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | DeepSeek native models + common aliases (`gpt-5.5`, `gpt-5.4-mini`, `gpt-5.3-codex`, `o3`, `claude-opus-4-6`, `gemini-2.5-pro`, `gemini-3.1-pro`, `gemini-3-flash`, etc.); `-nothinking` suffixes force thinking / reasoning off |
+| `model` | string | ✅ | Use `deepseek-flash` |
 | `messages` | array | ✅ | OpenAI-style messages |
 | `stream` | boolean | ❌ | Default `false` |
 | `tools` | array | ❌ | Function calling schema |
@@ -273,7 +191,7 @@ Content-Type: application/json
   "id": "<chat_session_id>",
   "object": "chat.completion",
   "created": 1738400000,
-  "model": "deepseek-v4-pro",
+  "model": "deepseek-flash",
   "choices": [
     {
       "index": 0,
@@ -372,7 +290,7 @@ OpenAI Responses-style endpoint, accepting either `input` or `messages`.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | Supports native models + alias mapping |
+| `model` | string | ✅ | Use `deepseek-flash` |
 | `input` | string/array/object | ❌ | One of `input` or `messages` is required |
 | `messages` | array | ❌ | One of `input` or `messages` is required |
 | `instructions` | string | ❌ | Prepended as a system message |
@@ -432,7 +350,7 @@ Business auth required. Returns OpenAI-compatible embeddings shape.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | Supports native models + alias mapping |
+| `model` | string | ✅ | Use `deepseek-flash` |
 | `input` | string/array | ✅ | Supports string, string array, token array |
 
 > Requires `embeddings.provider`. Current supported values: `mock` / `deterministic` / `builtin` (all three use the same local deterministic implementation). If missing/unsupported, returns standard error shape with HTTP 501.
@@ -458,189 +376,7 @@ Business auth required. Retrieves the current DeepSeek upload status for a file 
 
 ---
 
-## Claude-Compatible API
 
-Besides `/anthropic/v1/*`, DS2API also supports shortcut paths: `/v1/messages`, `/messages`, `/v1/messages/count_tokens`, `/messages/count_tokens`.
-Implementation-wise this path is unified on the OpenAI Chat Completions parse-and-translate pipeline to avoid maintaining divergent parsing chains.
-
-### `GET /anthropic/v1/models`
-
-No auth required.
-
-**Response**:
-
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "claude-sonnet-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-haiku-4-5", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-opus-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"}
-  ],
-  "first_id": "claude-opus-4-6",
-  "last_id": "claude-3-haiku-20240307",
-  "has_more": false
-}
-```
-
-> Note: the example is partial; besides the current primary aliases, the real response also includes Claude 4.x snapshots plus historical 3.x IDs and common aliases.
-
-### `POST /anthropic/v1/messages`
-
-**Headers**:
-
-```http
-x-api-key: your-api-key
-Content-Type: application/json
-anthropic-version: 2023-06-01
-```
-
-> `anthropic-version` is optional; DS2API auto-fills `2023-06-01` when absent.
-
-**Request body**:
-
-| Field | Type | Required | Notes |
-| --- | --- | --- | --- |
-| `model` | string | ✅ | For example `claude-sonnet-4-6` / `claude-opus-4-6` / `claude-haiku-4-5` (compatible with `claude-3-5-haiku-latest`), plus historical Claude model IDs |
-| `messages` | array | ✅ | Claude-style messages |
-| `max_tokens` | number | ❌ | Auto-filled to `8192` when omitted; not strictly enforced by upstream bridge |
-| `stream` | boolean | ❌ | Default `false` |
-| `system` | string | ❌ | Optional system prompt |
-| `tools` | array | ❌ | Claude tool schema |
-| `thinking` | object | ❌ | Anthropic thinking config; translated into downstream reasoning control, and ignored by `-nothinking` models |
-| `temperature` | number | ❌ | Passed through to the downstream bridge; if `temperature` and `top_p` are both present, `temperature` wins |
-| `top_p` | number | ❌ | Passed through when `temperature` is absent |
-| `stop_sequences` | array | ❌ | Passed through as downstream stop sequences |
-| `tool_choice` | string/object | ❌ | Supports `auto` / `none` / `required` / `{"type":"function","name":"..."}` and is translated to downstream tool choice |
-
-> Note: `thinking`, `temperature`, `top_p`, `stop_sequences`, and `tool_choice` are translated through the compatibility bridge. Final behavior still depends on the selected model and upstream support. When both `temperature` and `top_p` are present, `temperature` takes precedence.
-
-#### Non-Stream Response
-
-```json
-{
-  "id": "msg_1738400000000000000",
-  "type": "message",
-  "role": "assistant",
-  "model": "claude-sonnet-4-6",
-  "content": [
-    {"type": "text", "text": "response"}
-  ],
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {
-    "input_tokens": 12,
-    "output_tokens": 34
-  }
-}
-```
-
-If tool use is detected, `stop_reason` becomes `tool_use` and `content` contains `tool_use` blocks.
-
-#### Streaming (`stream=true`)
-
-SSE uses paired `event:` + `data:` lines. Event type is also in JSON `type`.
-
-```text
-event: message_start
-data: {"type":"message_start","message":{...}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}
-
-event: ping
-data: {"type":"ping"}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":12}}
-
-event: message_stop
-data: {"type":"message_stop"}
-```
-
-**Notes**:
-
-- Models that support thinking emit `thinking` blocks / `thinking_delta` by default; explicit thinking disablement or `-nothinking` models suppress them
-- `signature_delta` is not emitted (DeepSeek does not provide verifiable thinking signatures)
-- In `tools` mode, the stream avoids leaking raw tool JSON and does not force `input_json_delta`
-
-### `POST /anthropic/v1/messages/count_tokens`
-
-**Request**:
-
-```json
-{
-  "model": "claude-sonnet-4-6",
-  "messages": [
-    {"role": "user", "content": "Hello"}
-  ]
-}
-```
-
-**Response**:
-
-```json
-{
-  "input_tokens": 5
-}
-```
-
----
-
-## Gemini-Compatible API
-
-Supported paths:
-
-- `/v1beta/models/{model}:generateContent`
-- `/v1beta/models/{model}:streamGenerateContent`
-- `/v1/models/{model}:generateContent` (compat path)
-- `/v1/models/{model}:streamGenerateContent` (compat path)
-
-Authentication is the same as other business routes (`Authorization: Bearer <token>` or `x-api-key`).
-Implementation-wise this path is unified on the OpenAI Chat Completions parse-and-translate pipeline to avoid maintaining divergent parsing chains.
-
-### `POST /v1beta/models/{model}:generateContent`
-
-Request body accepts Gemini-style `contents` / `tools`. Model names can use aliases and are mapped to DeepSeek models.
-
-Response uses Gemini-compatible fields, including:
-
-- `candidates[].content.parts[].text`
-- `candidates[].content.parts[].thought=true` for thinking output
-- `candidates[].content.parts[].functionCall` (when tool call is produced)
-- `usageMetadata` (`promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`)
-
-### `POST /v1beta/models/{model}:streamGenerateContent`
-
-Returns SSE (`text/event-stream`), each chunk as `data: <json>`:
-
-- regular text: incremental text chunks
-- thinking: incremental chunks with `parts[].thought=true`
-- `tools` mode: buffered and emitted as `functionCall` at finalize phase
-- final chunk: includes `finishReason: "STOP"` and `usageMetadata`
-- Token counting prefers pass-through from upstream DeepSeek SSE (`accumulated_token_usage` / `token_usage`), and only falls back to local estimation when upstream usage is absent
-
----
-
-## Ollama API
-
-- `POST /api/show` request body: `{"model":"<model-id>"}`.
-- Response uses lowercase `id` (not `ID`) and includes `capabilities` for Ollama-style clients and strict schemas.
-
-Example response:
-
-```json
-{
-  "id": "deepseek-v4-flash",
-  "capabilities": ["tools", "thinking"]
-}
-```
 
 ## Admin API
 
@@ -728,12 +464,12 @@ Returns sanitized config, including both `keys` and `api_keys`.
       "token_preview": "abcde..."
     }
   ],
-  "model_aliases": {
-    "claude-sonnet-4-6": "deepseek-v4-flash",
-    "claude-opus-4-6": "deepseek-v4-pro"
-  }
+  "model_aliases": {}
 }
 ```
+
+
+> The `model_aliases` field remains for configuration compatibility but does not affect model resolution.
 
 ### `POST /admin/config`
 
@@ -752,10 +488,7 @@ If both `api_keys` and `keys` are sent, the structured `api_keys` entries win so
   "accounts": [
     {"email": "user@example.com", "password": "pwd", "token": ""}
   ],
-  "model_aliases": {
-    "claude-sonnet-4-6": "deepseek-v4-flash",
-    "claude-opus-4-6": "deepseek-v4-pro"
-  }
+  "model_aliases": {}
 }
 ```
 
@@ -960,7 +693,7 @@ Updates proxy binding for a specific account.
 | Field | Required | Notes |
 | --- | --- | --- |
 | `identifier` | ✅ | email / mobile / token-only synthetic id |
-| `model` | ❌ | default `deepseek-v4-flash` |
+| `model` | ❌ | default `deepseek-flash` |
 | `message` | ❌ | if empty, only session creation is tested |
 
 **Response**:
@@ -971,7 +704,7 @@ Updates proxy binding for a specific account.
   "success": true,
   "response_time": 1240,
   "message": "API test successful (session creation only)",
-  "model": "deepseek-v4-flash",
+  "model": "deepseek-flash",
   "session_count": 0,
   "config_writable": true,
   "config_warning": ""
@@ -1045,7 +778,7 @@ Test API availability through the service itself.
 
 | Field | Required | Default |
 | --- | --- | --- |
-| `model` | ❌ | `deepseek-v4-flash` |
+| `model` | ❌ | `deepseek-flash` |
 | `message` | ❌ | `你好` |
 | `api_key` | ❌ | First key in config |
 
@@ -1069,7 +802,7 @@ Common request fields:
 | --- | --- | --- | --- |
 | `message` | No | `你好` | Convenience single-turn user message |
 | `messages` | No | Auto-derived from `message` | OpenAI-style message array |
-| `model` | No | `deepseek-v4-flash` | Target model |
+| `model` | No | `deepseek-flash` | Target model |
 | `stream` | No | `true` | Recommended to keep streaming enabled so raw SSE is recorded |
 | `api_key` | No | First configured key | Business API key to use |
 | `sample_id` | No | Auto-generated | Sample directory name |
@@ -1231,7 +964,7 @@ Clears packet-capture entries:
 
 ## Error Payloads
 
-Compatible routes (`/v1/*`, `/anthropic/*`) use the same error envelope:
+Compatible routes (`/v1/*`) use the same error envelope:
 
 ```json
 {
@@ -1245,18 +978,6 @@ Compatible routes (`/v1/*`, `/anthropic/*`) use the same error envelope:
 ```
 
 Admin routes keep `{"detail":"..."}`.
-
-Gemini routes use Google-style errors:
-
-```json
-{
-  "error": {
-    "code": 400,
-    "message": "invalid json",
-    "status": "INVALID_ARGUMENT"
-  }
-}
-```
 
 Clients should handle HTTP status code plus `error` / `detail` fields.
 
@@ -1279,7 +1000,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "Hello"}],
     "stream": false
   }'
@@ -1292,7 +1013,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "Explain quantum entanglement"}],
     "stream": true
   }'
@@ -1305,7 +1026,7 @@ curl http://localhost:5001/v1/responses \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5-codex",
+    "model": "deepseek-flash",
     "input": "Write a hello world in golang",
     "stream": true
   }'
@@ -1318,23 +1039,12 @@ curl http://localhost:5001/v1/embeddings \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "deepseek-flash",
     "input": ["first text", "second text"]
   }'
 ```
 
-### OpenAI with Search
 
-```bash
-curl http://localhost:5001/v1/chat/completions \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash-search",
-    "messages": [{"role": "user", "content": "Latest news today"}],
-    "stream": true
-  }'
-```
 
 ### OpenAI Tool Calling
 
@@ -1343,7 +1053,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "What is the weather in Beijing?"}],
     "tools": [
       {
@@ -1364,66 +1074,7 @@ curl http://localhost:5001/v1/chat/completions \
   }'
 ```
 
-### Gemini Non-Stream
 
-```bash
-curl "http://localhost:5001/v1beta/models/gemini-2.5-pro:generateContent" \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{"text": "Introduce Go in three sentences"}]
-      }
-    ]
-  }'
-```
-
-### Gemini Stream
-
-```bash
-curl "http://localhost:5001/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{"text": "Write a short summary"}]
-      }
-    ]
-  }'
-```
-
-### Claude Non-Stream
-
-```bash
-curl http://localhost:5001/anthropic/v1/messages \
-  -H "x-api-key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-sonnet-4-6",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Hello"}]
-  }'
-```
-
-### Claude Stream
-
-```bash
-curl http://localhost:5001/anthropic/v1/messages \
-  -H "x-api-key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-opus-4-6",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "Explain relativity"}],
-    "stream": true
-  }'
-```
 
 ### Admin Login
 
@@ -1441,7 +1092,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "X-Ds2-Target-Account: user@example.com" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "Hello"}]
   }'
 ```

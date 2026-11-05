@@ -2,6 +2,8 @@ package history
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"strings"
@@ -10,13 +12,12 @@ import (
 	"ds2api/internal/config"
 	dsclient "ds2api/internal/deepseek/client"
 	"ds2api/internal/httpapi/openai/shared"
+	"ds2api/internal/privatecontext"
 	"ds2api/internal/promptcompat"
 	"ds2api/internal/util"
 )
 
 const (
-	currentInputFilename    = promptcompat.CurrentInputContextFilename
-	currentToolsFilename    = promptcompat.CurrentToolsContextFilename
 	currentInputContentType = "text/plain; charset=utf-8"
 	currentInputPurpose     = "assistants"
 )
@@ -35,146 +36,88 @@ type Service struct {
 	DS    CurrentInputUploader
 }
 
+// ApplyCurrentInputFile puts the conversation in one neutral private-context
+// file and keeps system instructions and tool schemas in the live prompt.
 func (s Service) ApplyCurrentInputFile(ctx context.Context, a *auth.RequestAuth, stdReq promptcompat.StandardRequest) (promptcompat.StandardRequest, error) {
 	if stdReq.CurrentInputFileApplied || s.DS == nil || s.Store == nil || a == nil || !s.Store.CurrentInputFileEnabled() {
 		return stdReq, nil
 	}
-	threshold := s.Store.CurrentInputFileMinChars()
+	fileText, liveMessages, ok := preparePrivateContext(s.Store, stdReq)
+	if !ok {
+		return stdReq, nil
+	}
+	for {
+		result, err := s.uploadPrivateContext(ctx, a, stdReq.ResolvedModel, fileText)
+		if err != nil {
+			// Existing caller-provided file IDs belong to the current account. Do
+			// not silently switch them to a different account.
+			if dsclient.IsAccountRestrictedError(err) && len(stdReq.RefFileIDs) == 0 && a.SwitchAccount(ctx) {
+				continue
+			}
+			return stdReq, fmt.Errorf("upload private context: %w", err)
+		}
+		if result == nil {
+			return stdReq, errors.New("upload private context returned no result")
+		}
+		fileID := strings.TrimSpace(result.ID)
+		if fileID == "" {
+			return stdReq, errors.New("upload private context returned empty file id")
+		}
+		stdReq.HistoryText = fileText
+		stdReq.CurrentInputFileApplied = true
+		stdReq.CurrentInputFileID = fileID
+		stdReq.CurrentToolsFileID = ""
+		stdReq.RefFileIDs = prependUniqueRefFileIDs(stdReq.RefFileIDs, fileID)
+		stdReq.FinalPrompt, stdReq.ToolNames = promptcompat.BuildOpenAIPrompt(liveMessages, stdReq.ToolsRaw, "", stdReq.ToolChoice, stdReq.Thinking)
+		stdReq.PromptTokenText = fileText + "\n" + stdReq.FinalPrompt
+		return stdReq, nil
+	}
+}
 
-	index, text := latestUserInputForFile(stdReq.Messages)
-	if index < 0 {
-		return stdReq, nil
+func (s Service) uploadPrivateContext(ctx context.Context, a *auth.RequestAuth, modelID, text string) (*dsclient.UploadFileResult, error) {
+	var random [12]byte
+	if _, err := rand.Read(random[:]); err != nil {
+		return nil, fmt.Errorf("generate private context filename: %w", err)
 	}
-	if len([]rune(text)) < threshold {
-		return stdReq, nil
-	}
-	fileText := promptcompat.BuildOpenAICurrentInputContextTranscript(stdReq.Messages)
-	if strings.TrimSpace(fileText) == "" {
-		return stdReq, errors.New("current user input file produced empty transcript")
-	}
-	toolsText, _ := promptcompat.BuildOpenAIToolsContextTranscript(stdReq.ToolsRaw, stdReq.ToolChoice)
 	modelType := "default"
-	if resolvedType, ok := config.GetModelType(stdReq.ResolvedModel); ok {
+	if resolvedType, ok := config.GetModelType(modelID); ok {
 		modelType = resolvedType
 	}
-	result, err := s.DS.UploadFile(ctx, a, dsclient.UploadFileRequest{
-		Filename:    currentInputFilename,
+	req := dsclient.UploadFileRequest{
+		Filename:    hex.EncodeToString(random[:]) + ".txt",
 		ContentType: currentInputContentType,
 		Purpose:     currentInputPurpose,
 		ModelType:   modelType,
-		Data:        []byte(fileText),
-	}, 3)
-	if err != nil {
-		return stdReq, fmt.Errorf("upload current user input file: %w", err)
+		Data:        []byte(text),
 	}
-	fileID := strings.TrimSpace(result.ID)
-	if fileID == "" {
-		return stdReq, errors.New("upload current user input file returned empty file id")
-	}
-
-	toolFileID := ""
-	if strings.TrimSpace(toolsText) != "" {
-		result, err := s.DS.UploadFile(ctx, a, dsclient.UploadFileRequest{
-			Filename:    currentToolsFilename,
-			ContentType: currentInputContentType,
-			Purpose:     currentInputPurpose,
-			ModelType:   modelType,
-			Data:        []byte(toolsText),
-		}, 3)
-		if err != nil {
-			return stdReq, fmt.Errorf("upload current tools file: %w", err)
-		}
-		toolFileID = strings.TrimSpace(result.ID)
-		if toolFileID == "" {
-			return stdReq, errors.New("upload current tools file returned empty file id")
-		}
-	}
-
-	messages := []any{
-		map[string]any{
-			"role":    "user",
-			"content": currentInputFilePrompt(toolFileID != ""),
-		},
-	}
-
-	stdReq.Messages = messages
-	stdReq.HistoryText = fileText
-	stdReq.CurrentInputFileApplied = true
-	stdReq.CurrentInputFileID = fileID
-	stdReq.CurrentToolsFileID = toolFileID
-	stdReq.RefFileIDs = prependUniqueRefFileIDs(stdReq.RefFileIDs, fileID, toolFileID)
-	stdReq.FinalPrompt, stdReq.ToolNames = promptcompat.BuildOpenAIPromptWithToolInstructionsOnly(messages, stdReq.ToolsRaw, "", stdReq.ToolChoice, stdReq.Thinking)
-	// Token accounting must reflect the actual downstream context:
-	// uploaded context files + the continuation live prompt.
-	tokenParts := []string{fileText}
-	if strings.TrimSpace(toolsText) != "" {
-		tokenParts = append(tokenParts, toolsText)
-	}
-	tokenParts = append(tokenParts, stdReq.FinalPrompt)
-	stdReq.PromptTokenText = strings.Join(tokenParts, "\n")
-	return stdReq, nil
+	return privatecontext.Upload(ctx, s.DS, a, req, 3, privatecontext.Key(a, modelType, text))
 }
 
 func (s Service) ReuploadAppliedCurrentInputFile(ctx context.Context, a *auth.RequestAuth, stdReq promptcompat.StandardRequest) (promptcompat.StandardRequest, error) {
-	if !stdReq.CurrentInputFileApplied || s.DS == nil || a == nil {
+	if !stdReq.CurrentInputFileApplied || s.DS == nil || a == nil || strings.TrimSpace(stdReq.HistoryText) == "" {
 		return stdReq, nil
 	}
-	fileText := strings.TrimSpace(stdReq.HistoryText)
-	if fileText == "" {
-		return stdReq, nil
-	}
-	modelType := "default"
-	if resolvedType, ok := config.GetModelType(stdReq.ResolvedModel); ok {
-		modelType = resolvedType
-	}
-	result, err := s.DS.UploadFile(ctx, a, dsclient.UploadFileRequest{
-		Filename:    currentInputFilename,
-		ContentType: currentInputContentType,
-		Purpose:     currentInputPurpose,
-		ModelType:   modelType,
-		Data:        []byte(stdReq.HistoryText),
-	}, 3)
+	result, err := s.uploadPrivateContext(ctx, a, stdReq.ResolvedModel, stdReq.HistoryText)
 	if err != nil {
-		return stdReq, fmt.Errorf("upload current user input file: %w", err)
+		return stdReq, fmt.Errorf("upload private context: %w", err)
+	}
+	if result == nil {
+		return stdReq, errors.New("upload private context returned no result")
 	}
 	fileID := strings.TrimSpace(result.ID)
 	if fileID == "" {
-		return stdReq, errors.New("upload current user input file returned empty file id")
+		return stdReq, errors.New("upload private context returned empty file id")
 	}
-
-	toolsText, _ := promptcompat.BuildOpenAIToolsContextTranscript(stdReq.ToolsRaw, stdReq.ToolChoice)
-	toolFileID := ""
-	if strings.TrimSpace(toolsText) != "" {
-		result, err := s.DS.UploadFile(ctx, a, dsclient.UploadFileRequest{
-			Filename:    currentToolsFilename,
-			ContentType: currentInputContentType,
-			Purpose:     currentInputPurpose,
-			ModelType:   modelType,
-			Data:        []byte(toolsText),
-		}, 3)
-		if err != nil {
-			return stdReq, fmt.Errorf("upload current tools file: %w", err)
-		}
-		toolFileID = strings.TrimSpace(result.ID)
-		if toolFileID == "" {
-			return stdReq, errors.New("upload current tools file returned empty file id")
-		}
-	}
-
-	stdReq.RefFileIDs = replaceGeneratedCurrentInputRefs(stdReq.RefFileIDs, stdReq.CurrentInputFileID, stdReq.CurrentToolsFileID, fileID, toolFileID)
+	stdReq.RefFileIDs = replaceGeneratedCurrentInputRefs(stdReq.RefFileIDs, stdReq.CurrentInputFileID, stdReq.CurrentToolsFileID, fileID)
 	stdReq.CurrentInputFileID = fileID
-	stdReq.CurrentToolsFileID = toolFileID
+	stdReq.CurrentToolsFileID = ""
 	return stdReq, nil
 }
 
 func latestUserInputForFile(messages []any) (int, string) {
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg, ok := messages[i].(map[string]any)
-		if !ok {
-			continue
-		}
-		role := strings.ToLower(strings.TrimSpace(shared.AsString(msg["role"])))
-		if role != "user" {
+		if !ok || strings.ToLower(strings.TrimSpace(shared.AsString(msg["role"]))) != "user" {
 			continue
 		}
 		text := promptcompat.NormalizeOpenAIContentForPrompt(msg["content"])
@@ -186,35 +129,15 @@ func latestUserInputForFile(messages []any) (int, string) {
 	return -1, ""
 }
 
-func currentInputFilePrompt(hasToolsFile bool) string {
-	prompt := "Continue from the latest state in the attached DS2API_HISTORY.txt context. Treat it as the current working state and answer the latest user request directly."
-	if hasToolsFile {
-		prompt += " Available tool descriptions and parameter schemas are attached in DS2API_TOOLS.txt; use only those tools and follow the tool-call format rules in this prompt."
-	}
-	return prompt
-}
-
 func prependUniqueRefFileIDs(existing []string, fileIDs ...string) []string {
 	out := make([]string, 0, len(existing)+len(fileIDs))
 	seen := map[string]struct{}{}
-	for _, fileID := range fileIDs {
-		trimmed := strings.TrimSpace(fileID)
-		if trimmed == "" {
-			continue
-		}
-		key := strings.ToLower(trimmed)
-		if _, ok := seen[key]; ok {
-			continue
-		}
-		out = append(out, trimmed)
-		seen[key] = struct{}{}
-	}
-	for _, id := range existing {
+	for _, id := range append(fileIDs, existing...) {
 		trimmed := strings.TrimSpace(id)
+		key := strings.ToLower(trimmed)
 		if trimmed == "" {
 			continue
 		}
-		key := strings.ToLower(trimmed)
 		if _, ok := seen[key]; ok {
 			continue
 		}
@@ -224,56 +147,39 @@ func prependUniqueRefFileIDs(existing []string, fileIDs ...string) []string {
 	return out
 }
 
-func replaceGeneratedCurrentInputRefs(existing []string, oldHistoryID, oldToolsID, newHistoryID, newToolsID string) []string {
+func replaceGeneratedCurrentInputRefs(existing []string, oldHistoryID, oldToolsID, newHistoryID string) []string {
 	filtered := make([]string, 0, len(existing))
-	old := map[string]struct{}{}
-	for _, id := range []string{oldHistoryID, oldToolsID} {
-		trimmed := strings.ToLower(strings.TrimSpace(id))
-		if trimmed != "" {
-			old[trimmed] = struct{}{}
-		}
-	}
 	for _, id := range existing {
-		trimmed := strings.TrimSpace(id)
-		if trimmed == "" {
+		if strings.TrimSpace(id) == "" || strings.EqualFold(id, oldHistoryID) || strings.EqualFold(id, oldToolsID) {
 			continue
 		}
-		if _, ok := old[strings.ToLower(trimmed)]; ok {
-			continue
-		}
-		filtered = append(filtered, trimmed)
+		filtered = append(filtered, id)
 	}
-	return prependUniqueRefFileIDs(filtered, newHistoryID, newToolsID)
+	return prependUniqueRefFileIDs(filtered, newHistoryID)
 }
 
-// EstimateCurrentInputFileTokens estimates the context replacement performed by
-// ApplyCurrentInputFile without contacting DeepSeek. It is used by the request
-// preflight gate so an oversized transcript is rejected before any upload.
-func EstimateCurrentInputFileTokens(store CurrentInputConfigReader, stdReq promptcompat.StandardRequest) (int, bool) {
+func preparePrivateContext(store CurrentInputConfigReader, stdReq promptcompat.StandardRequest) (string, []any, bool) {
 	if store == nil || !store.CurrentInputFileEnabled() || stdReq.CurrentInputFileApplied {
+		return "", nil, false
+	}
+	if _, latest := latestUserInputForFile(stdReq.Messages); strings.TrimSpace(latest) == "" {
+		return "", nil, false
+	}
+	_, history := promptcompat.SplitMessagesForPrivateContext(stdReq.Messages)
+	text := promptcompat.BuildOpenAIPrivateContextTranscript(history)
+	if strings.TrimSpace(text) == "" || len([]rune(text)) < store.CurrentInputFileMinChars() {
+		return "", nil, false
+	}
+	return text, promptcompat.BuildPrivateContextLiveMessages(stdReq.Messages), true
+}
+
+// EstimateCurrentInputFileTokens computes the same private context and live
+// prompt as ApplyCurrentInputFile before contacting the upstream service.
+func EstimateCurrentInputFileTokens(store CurrentInputConfigReader, stdReq promptcompat.StandardRequest) (int, bool) {
+	text, messages, ok := preparePrivateContext(store, stdReq)
+	if !ok {
 		return 0, false
 	}
-	threshold := store.CurrentInputFileMinChars()
-	_, latest := latestUserInputForFile(stdReq.Messages)
-	if latest == "" || len([]rune(latest)) < threshold {
-		return 0, false
-	}
-	historyText := promptcompat.BuildOpenAICurrentInputContextTranscript(stdReq.Messages)
-	if strings.TrimSpace(historyText) == "" {
-		return 0, false
-	}
-	toolsText, _ := promptcompat.BuildOpenAIToolsContextTranscript(stdReq.ToolsRaw, stdReq.ToolChoice)
-	messages := []any{map[string]any{
-		"role":    "user",
-		"content": currentInputFilePrompt(strings.TrimSpace(toolsText) != ""),
-	}}
-	prompt, _ := promptcompat.BuildOpenAIPromptWithToolInstructionsOnly(messages, stdReq.ToolsRaw, "", stdReq.ToolChoice, stdReq.Thinking)
-	model := strings.TrimSpace(stdReq.ResolvedModel)
-	parts := []string{historyText}
-	if strings.TrimSpace(toolsText) != "" {
-		parts = append(parts, toolsText)
-	}
-	parts = append(parts, prompt)
-	tokens := util.CountPromptTokens(strings.Join(parts, "\n"), model)
-	return tokens, true
+	prompt, _ := promptcompat.BuildOpenAIPrompt(messages, stdReq.ToolsRaw, "", stdReq.ToolChoice, stdReq.Thinking)
+	return util.CountPromptTokens(text+"\n"+prompt, strings.TrimSpace(stdReq.ResolvedModel)), true
 }

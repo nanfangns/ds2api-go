@@ -16,9 +16,6 @@
 - [路由总览](#路由总览)
 - [健康检查](#健康检查)
 - [OpenAI 兼容接口](#openai-兼容接口)
-- [Claude 兼容接口](#claude-兼容接口)
-- [Gemini 兼容接口](#gemini-兼容接口)
-- [Ollama 兼容接口](#ollama-兼容接口)
 - [Admin 接口](#admin-接口)
 - [错误响应格式](#错误响应格式)
 - [cURL 示例](#curl-示例)
@@ -27,25 +24,7 @@
 
 ## 基础信息
 
-| 项目 | 说明 |
-| --- | --- |
-| Base URL | `http://localhost:5001` 或你的部署域名 |
-| 默认 Content-Type | `application/json` |
-| 健康检查 | `GET /healthz`、`GET /readyz` |
-| CORS | 已启用（统一覆盖 `/v1/*`、`/anthropic/*`、`/v1beta/models/*`、`/api/*`、`/admin/*`；浏览器有 `Origin` 时回显该 Origin，否则为 `*`；默认允许 `Content-Type`, `Authorization`, `X-API-Key`, `X-Ds2-Target-Account`, `X-Ds2-Source`, `X-Vercel-Protection-Bypass`, `X-Goog-Api-Key`, `Anthropic-Version`, `Anthropic-Beta`，并会放行预检里声明的第三方请求头，如 `x-stainless-*`；Vercel 上 `/v1/chat/completions` 的 Node Runtime 也对齐相同行为；内部专用头 `X-Ds2-Internal-Token` 仍被拦截） |
-
-- 所有 JSON 请求体都必须是合法 UTF-8；非法字节序列会在入站阶段被拒绝为 `400 invalid json`。
-
-### 3.0 接口适配层说明
-
-- OpenAI / Claude / Gemini 三套协议已统一挂在同一 `chi` 路由树上，由 `internal/server/router.go` 负责装配。
-- 适配器层职责收敛为：**请求归一化 → DeepSeek 调用 → 协议形态渲染**，减少历史版本中“同能力多处实现”的分叉。
-- Tool Calling 的解析策略在 Go 与 Node Runtime 间保持一致：推荐模型输出半角管道符 DSML 外壳 `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`；兼容层也接受 DSML wrapper 别名 `<dsml|tool_calls>`、`<|tool_calls>`、常见 DSML 分隔符漏写形态（如 `<|DSML tool_calls>`）、`DSML` 与工具标签名黏连的常见 typo（如 `<DSMLtool_calls>`）、控制分隔符漂移（如 `<DSML␂tool_calls>` / 原始 STX `\x02`）、CJK 尖括号、全角感叹号、顿号、PascalCase 本地名、弯引号属性值与属性尾部分隔符漂移（如 `<DSM|parameter name="command"|>...〈/DSM|parameter〉` / `<！DSML！invoke name=“Bash”>` / `<、DSML、tool_calls>` / `<DSmartToolCalls>` / `<DSMLtool_calls※>`）、任意协议前缀壳（如 `<proto💥tool_calls>`），以及旧式 canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`。实现上采用结构扫描：只要固定本地标签名是 `tool_calls` / `invoke` / `parameter`，标签名前或标签名后的非结构性分隔符会在解析入口归一化；CDATA 开头也会容错 `<！[CDATA[` / `<、[CDATA[` 这类分隔符漂移；只有 `tool_calls` wrapper 或可修复的缺失 opening wrapper 会进入工具路径，裸 `<invoke>` 不计为已支持语法；流式场景继续执行防泄漏筛分。若参数体本身是合法 JSON 字面量（如 `123`、`true`、`null`、数组或对象），会按结构化值输出，不再一律当作字符串；显式空字符串和纯空白参数会结构化保留为空字符串，是否拒绝缺参由工具执行侧决定；完整但 malformed 的 wrapper 会作为普通文本释放，不会吞掉或伪造成工具调用；若 CDATA 偶发漏闭合，则会在最终 parse / flush 恢复阶段做窄修复，尽量保住已完整包裹的外层工具调用。
-- `Admin API` 将配置与运行时策略分开：`/admin/config*` 管静态配置，`/admin/settings*` 管运行时行为。
-- 当上游返回 thinking-only 响应（模型输出了推理链但无可见文本）时，Go 主路径与 Vercel Node 流式路径都会先自动重试一次：以多轮对话 follow-up 方式追加 prompt 后缀 `"Previous reply had no visible output. Please regenerate the visible final answer or tool call now."` 并设置 `parent_message_id` 在同一 DeepSeek session 内让模型重新输出；同账号重试最大 1 次。若同账号重试后仍即将返回 `429 upstream_empty_output`，托管账号模式会在返回 429 前自动切换到下一个可用账号，新建 session，用原始 payload 再 fresh retry 一次。
-- 引用标记处理边界：流式输出默认隐藏 `[citation:N]` / `[reference:N]` 这类上游内部占位符；非流式输出默认把 DeepSeek 搜索引用标记转换为 Markdown 引用链接。
-
----
+服务地址为 `http://localhost:5001` 或部署域名。健康检查为 `GET /healthz` 和 `GET /readyz`。业务接口使用 OpenAI 兼容协议；请求体必须为合法 UTF-8 JSON。上下文与账号处理见 [上下文兼容说明](docs/prompt-compatibility.md)。
 
 ## 配置最佳实践
 
@@ -71,7 +50,7 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 
 ## 鉴权规则
 
-### 业务接口（`/v1/*`、`/anthropic/*`、`/v1beta/models/*`）
+### 业务接口（`/v1/*`）
 
 支持两种传参方式：
 
@@ -79,7 +58,6 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 | --- | --- |
 | Bearer Token | `Authorization: Bearer <token>` |
 | API Key Header | `x-api-key: <token>`（无 `Bearer` 前缀） |
-| Gemini 兼容 | `x-goog-api-key: <token>` 或 `?key=<token>` / `?api_key=<token>` |
 
 **鉴权行为**：
 
@@ -87,7 +65,6 @@ Vercel 一键部署可先只填 `DS2API_ADMIN_KEY`，部署后在 `/admin` 导�
 - token 不在 `config.keys` 中 → **直通 token 模式**，直接作为 DeepSeek token 使用
 
 **可选请求头**：`X-Ds2-Target-Account: <email_or_mobile>` — 指定使用某个托管账号；如果目标账号不存在，或管理账号队列已耗尽，相关业务请求会返回 `429`，当前不会附带 `Retry-After` 头。若账号存在但登录/刷新失败，则返回对应的 `401` 或上游错误。未指定目标账号时，托管账号模式的 completion 空输出 429 会先尝试切到另一个可用账号 fresh retry 一次；指定目标账号或无其他可用账号时不会切号。
-Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=` 作为凭据来源。
 
 ### Admin 接口（`/admin/*`）
 
@@ -108,27 +85,13 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 | GET | `/readyz` | 无 | 就绪探针 |
 | HEAD | `/readyz` | 无 | 就绪探针（无响应体） |
 | GET | `/v1/models` | 无 | OpenAI 模型列表 |
-| GET | `/v1/models/{id}` | 无 | OpenAI 单模型查询（支持 alias 入参） |
+| GET | `/v1/models/{id}` | 无 | OpenAI 单模型查询 |
 | POST | `/v1/chat/completions` | 业务 | OpenAI 对话补全 |
 | POST | `/v1/responses` | 业务 | OpenAI Responses 接口（流式/非流式） |
 | GET | `/v1/responses/{response_id}` | 业务 | 查询已生成 response（内存 TTL） |
 | POST | `/v1/embeddings` | 业务 | OpenAI Embeddings 接口 |
 | POST | `/v1/files` | 业务 | OpenAI Files 上传（multipart/form-data） |
 | GET | `/v1/files/{file_id}` | 业务 | 查询已上传文件状态 |
-| GET | `/anthropic/v1/models` | 无 | Claude 模型列表 |
-| POST | `/anthropic/v1/messages` | 业务 | Claude 消息接口 |
-| POST | `/anthropic/v1/messages/count_tokens` | 业务 | Claude token 计数 |
-| POST | `/v1/messages` | 业务 | Claude 消息快捷路径 |
-| POST | `/messages` | 业务 | Claude 消息快捷路径 |
-| POST | `/v1/messages/count_tokens` | 业务 | Claude token 计数快捷路径 |
-| POST | `/messages/count_tokens` | 业务 | Claude token 计数快捷路径 |
-| POST | `/v1beta/models/{model}:generateContent` | 业务 | Gemini 非流式 |
-| POST | `/v1beta/models/{model}:streamGenerateContent` | 业务 | Gemini 流式 |
-| POST | `/v1/models/{model}:generateContent` | 业务 | Gemini 非流式兼容路径 |
-| POST | `/v1/models/{model}:streamGenerateContent` | 业务 | Gemini 流式兼容路径 |
-| GET | `/api/version` | 无 | Ollama 版本接口 |
-| GET | `/api/tags` | 无 | Ollama 模型列表 |
-| POST | `/api/show` | 无 | Ollama 单模型能力查询（返回 `id` 与 `capabilities`） |
 | POST | `/admin/login` | 无 | 管理登录 |
 | GET | `/admin/verify` | JWT | 校验管理 JWT |
 | GET | `/admin/vercel/config` | Admin | 读取 Vercel 预配置 |
@@ -176,7 +139,7 @@ Gemini 兼容客户端还可以使用 `x-goog-api-key`、`?key=` 或 `?api_key=`
 
 OpenAI `/v1/*` 仍是规范路径。对于只配置 DS2API 根地址的客户端，同一套 OpenAI handler 也通过根路径快捷路由暴露：`/models`、`/models/{id}`、`/chat/completions`、`/responses`、`/responses/{response_id}`、`/embeddings`、`/files`、`/files/{file_id}`。
 
-服务器端记录本质上是 DeepSeek 上游响应归档：OpenAI Chat、OpenAI Responses、Claude Messages、Gemini GenerateContent 等直连 DeepSeek 的生成接口，在收到上游响应后会于各协议回译/裁剪前写入记录；列表按请求创建时间倒序展示，流式请求会在生成过程中持续刷新状态与详情。WebUI「API 测试」发出的请求也会进入该记录。
+服务器端记录本质上是 DeepSeek 上游响应归档：OpenAI Chat 和 OpenAI Responses，在收到上游响应后会于各协议回译/裁剪前写入记录；列表按请求创建时间倒序展示，流式请求会在生成过程中持续刷新状态与详情。WebUI「API 测试」发出的请求也会进入该记录。
 
 ---
 
@@ -200,55 +163,11 @@ OpenAI `/v1/*` 仍是规范路径。对于只配置 DS2API 根地址的客户端
 
 ### `GET /v1/models`
 
-无需鉴权。返回当前支持的 DeepSeek 原生模型列表。
-
-**响应示例**：
-
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "deepseek-v4-flash", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-flash-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-search", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-pro-search-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-vision", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []},
-    {"id": "deepseek-v4-vision-nothinking", "object": "model", "created": 1677610602, "owned_by": "deepseek", "permission": []}
-  ]
-}
-```
-
-> 说明：`/v1/models` 返回的是规范化后的 DeepSeek 原生模型 ID；常见 alias 仅用于请求入参解析，不会在该接口中单独展开返回。带 `-nothinking` 后缀的模型表示无论请求里是否显式开启 thinking / reasoning，都会强制关闭思考输出。
-
-### 模型 alias 解析策略
-
-对 `chat` / `responses` / `embeddings` 的 `model` 字段采用“宽进严出”：
-
-1. 先匹配 DeepSeek 原生模型。
-2. 再匹配 `model_aliases` 精确映射。
-3. 如果请求名以 `-nothinking` 结尾，则在最终解析出的规范模型上追加对应的无思考变体。
-4. 仍未命中则返回 `invalid_request_error`。当前不会按未知模型家族做启发式兜底；需要新增兼容名时请通过 `model_aliases` 明确配置。
-
-当前内置默认 alias 来自 `internal/config/models.go`，`config.model_aliases` 会在运行时覆盖或补充同名映射。节选：
-
-- OpenAI / Codex：`gpt-4o`、`gpt-4.1`、`gpt-5`、`gpt-5.5`、`gpt-5-codex`、`gpt-5.3-codex`、`codex-mini-latest`
-- OpenAI reasoning：`o1`、`o3`、`o3-deep-research`、`o4-mini`
-- Claude：`claude-opus-4-6`、`claude-sonnet-4-6`、`claude-haiku-4-5`、`claude-3-5-sonnet-latest`
-- Gemini：`gemini-2.5-pro`、`gemini-2.5-flash`、`gemini-3.1-pro`、`gemini-3-pro`、`gemini-3-flash`、`gemini-3.1-flash-lite`、`gemini-pro-vision`
-- 其他内置精确 alias：`llama-3.1-70b-instruct`、`qwen-max`
-
-上述 alias 若在请求名后追加 `-nothinking` 后缀，也会映射到对应的强制关闭 thinking 版本。
-当前视觉能力仅对应 `deepseek-v4-vision` / `deepseek-v4-vision-nothinking`，不会解析出独立的 `vision-search` 变体。
-
-退役历史模型（如 `claude-1.*`、`claude-2.*`、`claude-instant-*`、`gpt-3.5*`）会被显式拒绝。
+无需鉴权。当前仅返回 `deepseek-flash`。请求同样只接受该模型 ID；旧模型、别名和 `-nothinking` 后缀不再支持。默认启用思考，可在请求中设置 `"thinking": false` 关闭。
 
 ### `POST /v1/chat/completions`
 
-> 路径说明：除规范路径 `/v1/chat/completions` 外，也支持根路径快捷别名 `/chat/completions`。在 Vercel Runtime 上，`vercel.json` 仅把规范路径 `/v1/chat/completions` 重写到 Node 流式桥接；根路径快捷别名仍走 Go 主链路。因此 Vercel 上需要实时流式时请使用 `/v1/chat/completions`。
+> 路径说明：也可使用根路径 `/chat/completions`；两者均由 Go 网关处理流式响应。
 
 **请求头**：
 
@@ -261,7 +180,7 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 支持 DeepSeek 原生模型 + 常见 alias（如 `gpt-5.5`、`gpt-5.4-mini`、`gpt-5.3-codex`、`o3`、`claude-opus-4-6`、`claude-sonnet-4-6`、`gemini-2.5-pro`、`gemini-3.1-pro`、`gemini-3-flash` 等）；若模型名带 `-nothinking` 后缀，则强制关闭 thinking / reasoning |
+| `model` | string | ✅ | 使用 `deepseek-flash` |
 | `messages` | array | ✅ | OpenAI 风格消息数组 |
 | `stream` | boolean | ❌ | 默认 `false` |
 | `tools` | array | ❌ | Function Calling 定义 |
@@ -274,7 +193,7 @@ Content-Type: application/json
   "id": "<chat_session_id>",
   "object": "chat.completion",
   "created": 1738400000,
-  "model": "deepseek-v4-pro",
+  "model": "deepseek-flash",
   "choices": [
     {
       "index": 0,
@@ -374,7 +293,7 @@ OpenAI Responses 风格接口，兼容 `input` 或 `messages`。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 支持原生模型 + alias 自动映射 |
+| `model` | string | ✅ | 使用 `deepseek-flash` |
 | `input` | string/array/object | ❌ | 与 `messages` 二选一 |
 | `messages` | array | ❌ | 与 `input` 二选一 |
 | `instructions` | string | ❌ | 自动前置为 system 消息 |
@@ -434,7 +353,7 @@ data: [DONE]
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 支持原生模型 + alias 自动映射 |
+| `model` | string | ✅ | 使用 `deepseek-flash` |
 | `input` | string/array | ✅ | 支持字符串、字符串数组、token 数组 |
 
 > 需配置 `embeddings.provider`。当前支持：`mock` / `deterministic` / `builtin`（三者都走同一套本地确定性实现）。未配置或不支持时返回标准错误结构（HTTP 501）。
@@ -460,193 +379,7 @@ data: [DONE]
 
 ---
 
-## Claude 兼容接口
 
-除标准路径 `/anthropic/v1/*` 外，还支持快捷路径 `/v1/messages`、`/messages`、`/v1/messages/count_tokens`、`/messages/count_tokens`。
-实现上统一走 OpenAI Chat Completions 解析与回译链路，避免多套解析逻辑分叉维护。
-
-### `GET /anthropic/v1/models`
-
-无需鉴权。
-
-**响应示例**：
-
-```json
-{
-  "object": "list",
-  "data": [
-    {"id": "claude-sonnet-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-sonnet-4-6-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-haiku-4-5", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-haiku-4-5-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-opus-4-6", "object": "model", "created": 1715635200, "owned_by": "anthropic"},
-    {"id": "claude-opus-4-6-nothinking", "object": "model", "created": 1715635200, "owned_by": "anthropic"}
-  ],
-  "first_id": "claude-opus-4-6",
-  "last_id": "claude-3-haiku-20240307-nothinking",
-  "has_more": false
-}
-```
-
-> 说明：示例仅展示部分模型；实际返回除当前主别名外，还包含 Claude 4.x snapshots、3.x 历史模型 ID 与常见别名，并为这些可映射模型额外提供 `-nothinking` 变体。
-
-### `POST /anthropic/v1/messages`
-
-**请求头**：
-
-```http
-x-api-key: your-api-key
-Content-Type: application/json
-anthropic-version: 2023-06-01
-```
-
-> `anthropic-version` 可省略，服务端会自动补为 `2023-06-01`。
-
-**请求体**：
-
-| 字段 | 类型 | 必填 | 说明 |
-| --- | --- | --- | --- |
-| `model` | string | ✅ | 例如 `claude-sonnet-4-6` / `claude-opus-4-6` / `claude-haiku-4-5`（兼容 `claude-sonnet-4-5`、`claude-3-5-haiku-latest`），并支持历史 Claude 模型 ID；若模型名带 `-nothinking` 后缀，则强制关闭 thinking / reasoning |
-| `messages` | array | ✅ | Claude 风格消息数组 |
-| `max_tokens` | number | ❌ | 缺省自动补 `8192`；当前实现不会硬性截断上游输出 |
-| `stream` | boolean | ❌ | 默认 `false` |
-| `system` | string | ❌ | 可选系统提示 |
-| `tools` | array | ❌ | Claude tool 定义 |
-| `thinking` | object | ❌ | Anthropic thinking 配置；会转译为下游 reasoning 控制，`-nothinking` 模型会忽略 |
-| `temperature` | number | ❌ | 透传到下游；若同时提供 `top_p`，以 `temperature` 为准 |
-| `top_p` | number | ❌ | 当未提供 `temperature` 时透传到下游 |
-| `stop_sequences` | array | ❌ | 透传到下游停用序列 |
-| `tool_choice` | string/object | ❌ | 支持 `auto` / `none` / `required` / `{"type":"function","name":"..."}`，并会转译为下游工具选择 |
-
-> 说明：上述 `thinking`、`temperature`、`top_p`、`stop_sequences`、`tool_choice` 都会走兼容层转译；最终是否生效仍取决于当前模型和上游能力。`temperature` 与 `top_p` 同时存在时，`temperature` 优先。
-
-#### 非流式响应
-
-```json
-{
-  "id": "msg_1738400000000000000",
-  "type": "message",
-  "role": "assistant",
-  "model": "claude-sonnet-4-6",
-  "content": [
-    {"type": "text", "text": "回复内容"}
-  ],
-  "stop_reason": "end_turn",
-  "stop_sequence": null,
-  "usage": {
-    "input_tokens": 12,
-    "output_tokens": 34
-  }
-}
-```
-
-若识别到工具调用，`stop_reason=tool_use`，`content` 中返回 `tool_use` block。
-
-#### 流式响应（`stream=true`）
-
-SSE 使用 `event:` + `data:` 双行格式，JSON 中保留 `type` 字段。
-
-```text
-event: message_start
-data: {"type":"message_start","message":{...}}
-
-event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
-
-event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}
-
-event: ping
-data: {"type":"ping"}
-
-event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null},"usage":{"output_tokens":12}}
-
-event: message_stop
-data: {"type":"message_stop"}
-```
-
-**说明**：
-
-- 默认支持 thinking 的模型会输出 `thinking` block / `thinking_delta`；请求显式关闭 thinking 或使用 `-nothinking` 模型时不会输出
-- 带 `-nothinking` 后缀的模型会强制关闭 thinking，即使请求显式传了 `thinking` / `reasoning` / `reasoning_effort` 也不会输出 `thinking_delta`
-- 不会输出 `signature_delta`（上游 DeepSeek 未提供可验证签名）
-- `tools` 场景优先避免泄露原始工具 JSON，不强制发送 `input_json_delta`
-
-### `POST /anthropic/v1/messages/count_tokens`
-
-**请求**：
-
-```json
-{
-  "model": "claude-sonnet-4-6",
-  "messages": [
-    {"role": "user", "content": "你好"}
-  ]
-}
-```
-
-**响应**：
-
-```json
-{
-  "input_tokens": 5
-}
-```
-
----
-
-## Gemini 兼容接口
-
-支持路径：
-
-- `/v1beta/models/{model}:generateContent`
-- `/v1beta/models/{model}:streamGenerateContent`
-- `/v1/models/{model}:generateContent`（兼容路径）
-- `/v1/models/{model}:streamGenerateContent`（兼容路径）
-
-鉴权方式同业务接口（`Authorization: Bearer <token>` 或 `x-api-key`）。
-实现上统一走 OpenAI Chat Completions 解析与回译链路，避免多套解析逻辑分叉维护。
-
-### `POST /v1beta/models/{model}:generateContent`
-
-请求体兼容 Gemini `contents` / `tools` 字段，模型名可用 alias 自动映射到 DeepSeek 模型；若路径中的模型名带 `-nothinking` 后缀，则最终会映射到对应的无思考模型。
-
-响应为 Gemini 兼容结构，核心字段包括：
-
-- `candidates[].content.parts[].text`
-- `candidates[].content.parts[].thought=true`（thinking 输出）
-- `candidates[].content.parts[].functionCall`（工具调用时）
-- `usageMetadata`（`promptTokenCount` / `candidatesTokenCount` / `totalTokenCount`）
-
-### `POST /v1beta/models/{model}:streamGenerateContent`
-
-返回 SSE（`text/event-stream`），每个 chunk 为一条 `data: <json>`：
-
-- 常规文本：持续返回增量文本 chunk
-- thinking：持续返回 `parts[].thought=true` 的增量 chunk
-- `tools` 场景：会缓冲并在结束时输出 `functionCall` 结构
-- 结束 chunk：包含 `finishReason: "STOP"` 与 `usageMetadata`
-- token 计数优先透传上游 DeepSeek SSE（如 `accumulated_token_usage` / `token_usage`）；仅在上游缺失时回退本地估算
-
----
-
-## Ollama 兼容接口
-
-- `POST /api/show` 请求体：`{"model":"<model-id>"}`。
-- 响应字段使用小写 `id`（不是 `ID`），并返回 `capabilities` 数组，便于与 Ollama 风格客户端/严格 schema 对齐。
-
-示例响应：
-
-```json
-{
-  "id": "deepseek-v4-flash",
-  "capabilities": ["tools", "thinking"]
-}
-```
 
 ## Admin 接口
 
@@ -734,12 +467,12 @@ data: {"type":"message_stop"}
       "token_preview": "abcde..."
     }
   ],
-  "model_aliases": {
-    "claude-sonnet-4-6": "deepseek-v4-flash",
-    "claude-opus-4-6": "deepseek-v4-pro"
-  }
+  "model_aliases": {}
 }
 ```
+
+
+> `model_aliases` 字段为了兼容配置导入而保留，但当前模型解析不使用它。
 
 ### `POST /admin/config`
 
@@ -758,10 +491,7 @@ data: {"type":"message_stop"}
   "accounts": [
     {"email": "user@example.com", "password": "pwd", "token": ""}
   ],
-  "model_aliases": {
-    "claude-sonnet-4-6": "deepseek-v4-flash",
-    "claude-opus-4-6": "deepseek-v4-pro"
-  }
+  "model_aliases": {}
 }
 ```
 
@@ -969,7 +699,7 @@ data: {"type":"message_stop"}
 | 字段 | 必填 | 说明 |
 | --- | --- | --- |
 | `identifier` | ✅ | email / mobile / token-only 合成标识 |
-| `model` | ❌ | 默认 `deepseek-v4-flash` |
+| `model` | ❌ | 默认 `deepseek-flash` |
 | `message` | ❌ | 空字符串时仅测试会话创建 |
 
 **响应**：
@@ -980,7 +710,7 @@ data: {"type":"message_stop"}
   "success": true,
   "response_time": 1240,
   "message": "API 测试成功（仅会话创建）",
-  "model": "deepseek-v4-flash",
+  "model": "deepseek-flash",
   "session_count": 0,
   "config_writable": true,
   "config_warning": ""
@@ -1053,7 +783,7 @@ data: {"type":"message_stop"}
 
 | 字段 | 必填 | 默认值 |
 | --- | --- | --- |
-| `model` | ❌ | `deepseek-v4-flash` |
+| `model` | ❌ | `deepseek-flash` |
 | `message` | ❌ | `你好` |
 | `api_key` | ❌ | 配置中第一个 key |
 
@@ -1077,7 +807,7 @@ data: {"type":"message_stop"}
 | --- | --- | --- | --- |
 | `message` | 否 | `你好` | 便捷单轮用户消息 |
 | `messages` | 否 | 自动由 `message` 生成 | OpenAI 风格消息数组 |
-| `model` | 否 | `deepseek-v4-flash` | 目标模型 |
+| `model` | 否 | `deepseek-flash` | 目标模型 |
 | `stream` | 否 | `true` | 建议保留流式，以记录原始 SSE |
 | `api_key` | 否 | 配置中第一个 key | 调用业务接口使用的 key |
 | `sample_id` | 否 | 自动生成 | 样本目录名 |
@@ -1239,7 +969,7 @@ data: {"type":"message_stop"}
 
 ## 错误响应格式
 
-兼容路由（`/v1/*`、`/anthropic/*`）统一使用以下结构：
+兼容路由（`/v1/*`）统一使用以下结构：
 
 ```json
 {
@@ -1253,18 +983,6 @@ data: {"type":"message_stop"}
 ```
 
 Admin 接口保持 `{"detail":"..."}`。
-
-Gemini 路由使用 Google 风格错误结构：
-
-```json
-{
-  "error": {
-    "code": 400,
-    "message": "invalid json",
-    "status": "INVALID_ARGUMENT"
-  }
-}
-```
 
 建议客户端处理逻辑：检查 HTTP 状态码 + 解析 `error` 或 `detail` 字段。
 
@@ -1287,7 +1005,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "你好"}],
     "stream": false
   }'
@@ -1300,7 +1018,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-pro",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "解释一下量子纠缠"}],
     "stream": true
   }'
@@ -1313,7 +1031,7 @@ curl http://localhost:5001/v1/responses \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-5.3-codex",
+    "model": "deepseek-flash",
     "input": "写一个 golang 的 hello world",
     "stream": true
   }'
@@ -1326,23 +1044,12 @@ curl http://localhost:5001/v1/embeddings \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "gpt-4o",
+    "model": "deepseek-flash",
     "input": ["第一段文本", "第二段文本"]
   }'
 ```
 
-### OpenAI 带搜索
 
-```bash
-curl http://localhost:5001/v1/chat/completions \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "model": "deepseek-v4-flash-search",
-    "messages": [{"role": "user", "content": "今天的新闻"}],
-    "stream": true
-  }'
-```
 
 ### OpenAI Tool Calling
 
@@ -1351,7 +1058,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "北京今天天气怎么样？"}],
     "tools": [
       {
@@ -1372,66 +1079,7 @@ curl http://localhost:5001/v1/chat/completions \
   }'
 ```
 
-### Gemini 非流式
 
-```bash
-curl "http://localhost:5001/v1beta/models/gemini-2.5-pro:generateContent" \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{"text": "用三句话介绍 Go 语言"}]
-      }
-    ]
-  }'
-```
-
-### Gemini 流式
-
-```bash
-curl "http://localhost:5001/v1beta/models/gemini-2.5-flash:streamGenerateContent" \
-  -H "Authorization: Bearer your-api-key" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "contents": [
-      {
-        "role": "user",
-        "parts": [{"text": "写一个简短摘要"}]
-      }
-    ]
-  }'
-```
-
-### Claude 非流式
-
-```bash
-curl http://localhost:5001/anthropic/v1/messages \
-  -H "x-api-key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-sonnet-4-6",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "你好"}]
-  }'
-```
-
-### Claude 流式
-
-```bash
-curl http://localhost:5001/anthropic/v1/messages \
-  -H "x-api-key: your-api-key" \
-  -H "Content-Type: application/json" \
-  -H "anthropic-version: 2023-06-01" \
-  -d '{
-    "model": "claude-opus-4-6",
-    "max_tokens": 1024,
-    "messages": [{"role": "user", "content": "解释相对论"}],
-    "stream": true
-  }'
-```
 
 ### Admin 登录
 
@@ -1449,7 +1097,7 @@ curl http://localhost:5001/v1/chat/completions \
   -H "X-Ds2-Target-Account: user@example.com" \
   -H "Content-Type: application/json" \
   -d '{
-    "model": "deepseek-v4-flash",
+    "model": "deepseek-flash",
     "messages": [{"role": "user", "content": "你好"}]
   }'
 ```

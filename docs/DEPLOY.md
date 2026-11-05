@@ -519,7 +519,7 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/admin
 curl http://127.0.0.1:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hello"}]}'
+  -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ---
@@ -547,7 +547,7 @@ go run ./cmd/ds2api-tests \
 
 - ✅ 语法/构建/单测 preflight
 - ✅ 隔离副本配置启动服务（不污染原始 `config.json`）
-- ✅ 真实调用场景验证（OpenAI/Claude/Admin/并发/toolcall/流式）
+- ✅ 真实调用场景验证（OpenAI/Admin/并发/toolcall/流式）
 - ✅ 全量请求与响应日志落盘（用于故障复盘）
 
 详细测试集说明参阅 [TESTING.md](TESTING.md)。PR 前的固定本地门禁以 [TESTING.md](TESTING.md#pr-门禁--pr-gates) 为准。

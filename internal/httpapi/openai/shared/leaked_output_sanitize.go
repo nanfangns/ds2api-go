@@ -31,6 +31,31 @@ var leakedThoughtMarkerPattern = regexp.MustCompile(`(?i)<[\|\x{ff5c}]\s*(?:begi
 //   - U+2581 variant:   <|end▁of▁sentence|>, <|end▁of▁toolresults|>, <|end▁of▁instructions|>
 var leakedMetaMarkerPattern = regexp.MustCompile(`(?i)<[\|\x{ff5c}]\s*(?:assistant|tool|end[_▁]of[_▁]sentence|end[_▁]of[_▁]thinking|end[_▁]of[_▁]thought|end[_▁]of[_▁]toolresults|end[_▁]of[_▁]instructions)\s*[\|\x{ff5c}]>`)
 
+var leakedRoleSegMarkerPattern = regexp.MustCompile(`::/?(?:sys|user|asst|tool)::`)
+
+// leakedPrivateContextToolCompactLinePattern matches single-line echoes:
+//
+//	Tool: [tool_call_id=call_xxx] Successfully modified file: path.c
+var leakedPrivateContextToolCompactLinePattern = regexp.MustCompile(
+	`(?im)^[ \t]*Tool\s*:\s*\[[^\]]*tool_call_id\s*=\s*call[^\]]*\][^\r\n]*`,
+)
+
+// leakedPrivateContextToolMultilinePattern matches transcript-shaped echoes:
+//
+//	Tool:
+//	[name=StrReplace tool_call_id=call_xxx]
+//	Successfully modified file: path.c
+var leakedPrivateContextToolMultilinePattern = regexp.MustCompile(
+	`(?im)^[ \t]*Tool\s*:\s*\r?\n[ \t]*\[[^\]]*tool_call_id\s*=\s*call[^\]]*\][^\r\n]*\r?\n[^\S\r\n]*Successfully [^\r\n]*`,
+)
+
+// leakedPrivateContextToolHeaderLinePattern catches compacted echoes that drop
+// the role label but keep the synthetic [tool_call_id=call_…] header plus a
+// write-success body on the same line.
+var leakedPrivateContextToolHeaderLinePattern = regexp.MustCompile(
+	`(?im)^[ \t]*\[[^\]]*tool_call_id\s*=\s*call[0-9a-fA-F_-]+[^\]]*\][ \t]*Successfully (?:modified|wrote|created|updated|deleted)[^\r\n]*`,
+)
+
 // leakedAgentXMLBlockPatterns catch agent-style XML blocks that leak through
 // when the sieve fails to capture them. These are applied only to complete
 // wrapper blocks so standalone "<result>" examples in normal output remain
@@ -58,6 +83,10 @@ func sanitizeLeakedOutput(text string) string {
 	out = leakedBOSMarkerPattern.ReplaceAllString(out, "")
 	out = leakedThoughtMarkerPattern.ReplaceAllString(out, "")
 	out = leakedMetaMarkerPattern.ReplaceAllString(out, "")
+	out = leakedRoleSegMarkerPattern.ReplaceAllString(out, "")
+	out = leakedPrivateContextToolMultilinePattern.ReplaceAllString(out, "")
+	out = leakedPrivateContextToolCompactLinePattern.ReplaceAllString(out, "")
+	out = leakedPrivateContextToolHeaderLinePattern.ReplaceAllString(out, "")
 	out = stripLeakedToolCallWrapperBlocks(out)
 	out = sanitizeLeakedAgentXMLBlocks(out)
 	return out
@@ -85,6 +114,10 @@ func stripLeakedToolCallWrapperBlocks(text string) string {
 		}
 		closeTag, ok := toolcall.FindMatchingToolMarkupClose(text, tag)
 		if !ok {
+			if end, found := findLeakedToolCallsSpanEnd(text, tag.End+1); found {
+				pos = end
+				continue
+			}
 			b.WriteString(text[tag.Start : tag.End+1])
 			pos = tag.End + 1
 			continue
@@ -92,6 +125,35 @@ func stripLeakedToolCallWrapperBlocks(text string) string {
 		pos = closeTag.End + 1
 	}
 	return b.String()
+}
+
+// findLeakedToolCallsSpanEnd locates the end of a leaked tool-call attempt when
+// the canonical close tag is missing or truncated (e.g. "::/tc:").
+func findLeakedToolCallsSpanEnd(text string, from int) (int, bool) {
+	if from < 0 {
+		from = 0
+	}
+	if from >= len(text) {
+		return len(text), true
+	}
+	rest := text[from:]
+	lower := strings.ToLower(rest)
+	if !strings.Contains(lower, "::invoke") && !strings.Contains(lower, "invoke name=") {
+		return 0, false
+	}
+	// Prefer an explicit truncated close if present.
+	for _, needle := range []string{"::/tc:", "::/tc", "::/tool_calls:", "::/tool_calls"} {
+		if idx := strings.Index(lower, needle); idx >= 0 {
+			end := from + idx + len(needle)
+			for end < len(text) && text[end] == ':' {
+				end++
+			}
+			return end, true
+		}
+	}
+	// Otherwise drop through EOF — once ::tc:: + invoke started, remaining
+	// markup is almost never intended as user-visible prose.
+	return len(text), true
 }
 
 func stripDanglingThinkSuffix(text string) string {

@@ -296,8 +296,6 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # optional for personal accounts
 | `DS2API_ACCOUNT_MAX_QUEUE` | Waiting queue limit | `recommended_concurrency` |
 | `DS2API_GLOBAL_MAX_INFLIGHT` | Global inflight limit | `recommended_concurrency` |
 | `DS2API_ENV_WRITEBACK` | When `DS2API_CONFIG_JSON` is present, auto-write to `DS2API_CONFIG_PATH` and switch to file-backed mode after success (`1/true/yes/on`) | Disabled |
-| `DS2API_VERCEL_INTERNAL_SECRET` | Hybrid streaming internal auth | Falls back to `DS2API_ADMIN_KEY` |
-| `DS2API_VERCEL_STREAM_LEASE_TTL_SECONDS` | Stream lease TTL | `900` |
 | `DS2API_RAW_STREAM_SAMPLE_ROOT` | Raw stream sample root for saving/reading samples | `tests/raw_stream_samples` |
 | `DS2API_STATIC_ADMIN_DIR` | WebUI static asset directory | `static/admin` |
 | `DS2API_AUTO_BUILD_WEBUI` | Whether local startup auto-builds missing WebUI assets (`1/true/yes/on` or `0/false/no/off`) | Enabled outside Vercel |
@@ -305,117 +303,14 @@ VERCEL_TEAM_ID=team_xxxxxxxxxxxx   # optional for personal accounts
 | `VERCEL_PROJECT_ID` | Vercel project ID | — |
 | `VERCEL_TEAM_ID` | Vercel team ID | — |
 | `DS2API_CHAT_HISTORY_PATH` | Chat history storage path (must be set to `/tmp/chat_history.json` on Vercel, otherwise unavailable due to read-only filesystem) | `data/chat_history.json` |
-| `DS2API_VERCEL_PROTECTION_BYPASS` | Deployment protection bypass for internal Node→Go calls | — |
 
 ### 3.4 Vercel Architecture
 
-```text
-Request ──────┐
-              │
-              ▼
-         vercel.json routing
-              │
-        ┌─────┴─────┐
-        │           │
-        ▼           ▼
-  api/index.go   api/chat-stream.js
-  (Go Runtime)   (Node Runtime)
-```
+`vercel.json` routes traffic to the container built from `Dockerfile.vercel`. The container runs the Go gateway and a local device-harvest service; Go serves streaming responses directly. Runtime files and account states are instance-local when configuration is environment-backed. Platform resource limits and costs depend on the Vercel plan and actual usage.
 
-- **Go entry**: `api/index.go` (Serverless Go)
-- **Stream entry**: `api/chat-stream.js` (Node Runtime for real-time SSE; `vercel.json` rewrites only the canonical `/v1/chat/completions` path here, while the root shortcut `/chat/completions` stays on the Go entry)
-- **Routing**: `vercel.json`
-- **Build command**: `npm ci --prefix webui && npm run build --prefix webui` (automatic)
+### 3.5 Troubleshooting
 
-#### Streaming Pipeline
-
-Vercel Go Runtime applies platform-level response buffering, so this project uses a hybrid "**Go prepare + Node stream**" path on Vercel:
-
-1. `api/chat-stream.js` receives `/v1/chat/completions` request
-2. Node calls Go internal prepare endpoint (`?__stream_prepare=1`) for session ID, PoW, token
-3. Go prepare creates a stream lease, locking the account
-4. Node connects directly to DeepSeek upstream, relays SSE in real-time to client (including OpenAI chunk framing and tools anti-leak sieve)
-5. After stream ends, Node calls Go release endpoint (`?__stream_release=1`) to free the account
-
-> This adaptation is **Vercel-only**; local and Docker remain pure Go.
-
-#### Non-Stream Fallback and Tool Call Handling
-
-- `api/chat-stream.js` falls back to Go entry (`?__go=1`) for non-stream requests only
-- Streaming requests (including requests with `tools`) stay on the Node path and use Go-aligned tool-call anti-leak handling
-- The Node stream path also mirrors Go finalization semantics: empty visible output returns the same shaped error SSE, and empty `content_filter` returns a `content_filter` error
-- WebUI non-stream test calls `?__go=1` directly to avoid Node hop timeout on long requests
-
-#### Function Duration
-
-`vercel.json` sets `maxDuration: 300` for both `api/chat-stream.js` and `api/index.go` (subject to your Vercel plan limits).
-
-### 3.5 Vercel Troubleshooting
-
-#### Go Build Failure
-
-```text
-Error: Command failed: go build -ldflags -s -w -o .../bootstrap ...
-```
-
-**Cause**: Invalid Go build flag settings in Vercel (`-ldflags` not passed as a single argument).
-
-**Fix**:
-
-1. Open Vercel Project Settings → Build and Development Settings
-2. **Clear** custom Go Build Flags / Build Command (recommended)
-3. If ldflags must be used, set `-ldflags="-s -w"` (ensure it's one argument)
-4. Verify `go.mod` uses a supported version (currently `go 1.26.0`)
-5. Redeploy (recommended: clear cache)
-
-#### Internal Package Import Error
-
-```text
-use of internal package ds2api/internal/server not allowed
-```
-
-**Cause**: Vercel Go entrypoint directly imports `internal/...`.
-
-**Fix**: This repo uses a public bridge package: `api/index.go` → `ds2api/app` → `internal/server`.
-
-#### Output Directory Error
-
-```text
-No Output Directory named "public" found after the Build completed.
-```
-
-**Fix**: This repo uses `static` as output directory (`"outputDirectory": "static"` in `vercel.json`). If you manually changed Output Directory in Project Settings, set it to `static` or clear it.
-
-#### Deployment Protection Blocking
-
-If API responses return Vercel HTML `Authentication Required`:
-
-- **Option A**: Disable Deployment Protection for that environment (recommended for public APIs)
-- **Option B**: Add `x-vercel-protection-bypass` header to requests
-- **Option C**: Set `VERCEL_AUTOMATION_BYPASS_SECRET` (or `DS2API_VERCEL_PROTECTION_BYPASS`) for internal Node→Go calls
-
-#### Chat History Unavailable (read-only file system)
-
-```text
-create chat history dir: mkdir /var/task/data: read-only file system
-```
-
-**Cause**: Vercel Serverless functions have a read-only filesystem (`/var/task`). Chat history fails because it cannot create directories there.
-
-**Fix**: Add the following in Vercel Project Settings → Environment Variables:
-
-```text
-DS2API_CHAT_HISTORY_PATH=/tmp/chat_history.json
-```
-
-`/tmp` is the only writable directory in Vercel Serverless. Data is ephemeral (not persisted across cold starts), but the feature works within a single instance lifetime.
-
-### 3.6 Build Artifacts Not Committed
-
-- `static/admin` directory is not in Git
-- Vercel / Docker automatically generate WebUI assets during build
-
----
+Inspect deployment build and runtime logs. Check `DS2API_CONFIG_JSON`, the admin key and account status without disclosing their values. Runtime state in `/tmp` can disappear after a restart.
 
 ## 4. Local Run from Source
 
@@ -606,7 +501,7 @@ curl -s -o /dev/null -w "%{http_code}" http://127.0.0.1:5001/admin
 curl http://127.0.0.1:5001/v1/chat/completions \
   -H "Authorization: Bearer your-api-key" \
   -H "Content-Type: application/json" \
-  -d '{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hello"}]}'
+  -d '{"model":"deepseek-flash","messages":[{"role":"user","content":"hello"}]}'
 ```
 
 ---
@@ -634,7 +529,7 @@ The testsuite automatically performs:
 
 - ✅ Preflight checks (syntax/build/unit tests)
 - ✅ Isolated config copy startup (no mutation to your original `config.json`)
-- ✅ Live scenario verification (OpenAI/Claude/Admin/concurrency/toolcall/streaming)
+- ✅ Live scenario verification (OpenAI/Admin/concurrency/toolcall/streaming)
 - ✅ Full request/response artifact logging for debugging
 
 For detailed testsuite documentation, see [TESTING.md](TESTING.md). The fixed local PR gates are listed in [TESTING.md](TESTING.md#pr-门禁--pr-gates).

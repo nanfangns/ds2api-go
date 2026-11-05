@@ -64,7 +64,7 @@ func TestChatCompletionsNonStreamPersistsHistory(t *testing.T) {
 		ChatHistory: historyStore,
 	}
 
-	reqBody := `{"model":"deepseek-v4-flash","messages":[{"role":"system","content":"be precise"},{"role":"user","content":"hi there"},{"role":"assistant","content":"previous answer"}],"stream":false}`
+	reqBody := `{"model":"deepseek-flash","messages":[{"role":"system","content":"be precise"},{"role":"user","content":"hi there"},{"role":"assistant","content":"previous answer"}],"stream":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer direct-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -107,7 +107,7 @@ func TestChatHistoryNonStreamArchivesRawToolCallMarkup(t *testing.T) {
 	historyStore := newTestChatHistoryStore(t)
 	entry, err := historyStore.Start(chathistory.StartParams{
 		CallerID:  "caller:test",
-		Model:     "deepseek-v4-flash",
+		Model:     "deepseek-flash",
 		UserInput: "call tool",
 	})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestChatHistoryNonStreamArchivesRawToolCallMarkup(t *testing.T) {
 	h := &Handler{}
 	rec := httptest.NewRecorder()
 	resp := makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":`+strconv.Quote(rawToolCall)+`}`, `data: [DONE]`)
-	h.handleNonStream(rec, resp, "cid-tool-history", "deepseek-v4-flash", "prompt", 0, false, false, []string{"search"}, nil, session)
+	h.handleNonStream(rec, resp, "cid-tool-history", "deepseek-flash", "prompt", 0, false, false, []string{"search"}, nil, session)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -146,7 +146,7 @@ func TestChatHistoryStreamArchivesRawToolCallMarkup(t *testing.T) {
 	historyStore := newTestChatHistoryStore(t)
 	entry, err := historyStore.Start(chathistory.StartParams{
 		CallerID:  "caller:test",
-		Model:     "deepseek-v4-flash",
+		Model:     "deepseek-flash",
 		Stream:    true,
 		UserInput: "call tool",
 	})
@@ -166,7 +166,7 @@ func TestChatHistoryStreamArchivesRawToolCallMarkup(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	rec := httptest.NewRecorder()
 	resp := makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":`+strconv.Quote(rawToolCall)+`}`, `data: [DONE]`)
-	h.handleStream(rec, req, resp, "cid-stream-tool-history", "deepseek-v4-flash", "prompt", 0, false, false, []string{"search"}, nil, session)
+	h.handleStream(rec, req, resp, "cid-stream-tool-history", "deepseek-flash", "prompt", 0, false, false, []string{"search"}, nil, session)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d body=%s", rec.Code, rec.Body.String())
@@ -196,7 +196,7 @@ func TestStartChatHistoryRecoversFromTransientWriteFailure(t *testing.T) {
 		AccountID: "acct:test",
 	}
 	stdReq := promptcompat.StandardRequest{
-		ResponseModel: "deepseek-v4-flash",
+		ResponseModel: "deepseek-flash",
 		Stream:        true,
 		Messages: []any{
 			map[string]any{"role": "user", "content": "hello"},
@@ -254,7 +254,7 @@ func TestHandleStreamContextCancelledMarksHistoryStopped(t *testing.T) {
 	historyStore := newTestChatHistoryStore(t)
 	entry, err := historyStore.Start(chathistory.StartParams{
 		CallerID:  "caller:test",
-		Model:     "deepseek-v4-flash",
+		Model:     "deepseek-flash",
 		Stream:    true,
 		UserInput: "hello",
 	})
@@ -276,7 +276,7 @@ func TestHandleStreamContextCancelledMarksHistoryStopped(t *testing.T) {
 	rec := httptest.NewRecorder()
 	resp := makeOpenAISSEHTTPResponse(`data: {"p":"response/content","v":"hello"}`, `data: [DONE]`)
 
-	h.handleStream(rec, req, resp, "cid-stop", "deepseek-v4-flash", "prompt", 0, false, false, nil, nil, session)
+	h.handleStream(rec, req, resp, "cid-stop", "deepseek-flash", "prompt", 0, false, false, nil, nil, session)
 
 	snapshot, err := historyStore.Snapshot()
 	if err != nil {
@@ -303,7 +303,7 @@ func TestChatCompletionsRecordsAdminWebUISource(t *testing.T) {
 		ChatHistory: historyStore,
 	}
 
-	reqBody := `{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi there"}],"stream":false}`
+	reqBody := `{"model":"deepseek-flash","messages":[{"role":"user","content":"hi there"}],"stream":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer direct-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -335,7 +335,7 @@ func TestChatCompletionsSkipsHistoryWhenDisabled(t *testing.T) {
 		ChatHistory: historyStore,
 	}
 
-	reqBody := `{"model":"deepseek-v4-flash","messages":[{"role":"user","content":"hi there"}],"stream":false}`
+	reqBody := `{"model":"deepseek-flash","messages":[{"role":"user","content":"hi there"}],"stream":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer direct-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -366,7 +366,7 @@ func TestChatCompletionsCurrentInputFilePersistsNeutralPrompt(t *testing.T) {
 		ChatHistory: historyStore,
 	}
 
-	reqBody := `{"model":"deepseek-v4-flash","messages":[{"role":"system","content":"system instructions"},{"role":"user","content":"first user turn"},{"role":"assistant","content":"","reasoning_content":"hidden reasoning","tool_calls":[{"name":"search","arguments":{"query":"docs"}}]},{"role":"tool","name":"search","tool_call_id":"call-1","content":"tool result"},{"role":"user","content":"latest user turn"}],"stream":false}`
+	reqBody := `{"model":"deepseek-flash","messages":[{"role":"system","content":"system instructions"},{"role":"user","content":"first user turn"},{"role":"assistant","content":"","reasoning_content":"hidden reasoning","tool_calls":[{"name":"search","arguments":{"query":"docs"}}]},{"role":"tool","name":"search","tool_call_id":"call-1","content":"tool result"},{"role":"user","content":"latest user turn"}],"stream":false}`
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(reqBody))
 	req.Header.Set("Authorization", "Bearer direct-token")
 	req.Header.Set("Content-Type", "application/json")
@@ -391,16 +391,16 @@ func TestChatCompletionsCurrentInputFilePersistsNeutralPrompt(t *testing.T) {
 	if len(ds.uploadCalls) != 1 {
 		t.Fatalf("expected current input upload to happen, got %d", len(ds.uploadCalls))
 	}
-	if ds.uploadCalls[0].Filename != "DS2API_HISTORY.txt" {
-		t.Fatalf("expected DS2API_HISTORY.txt upload, got %q", ds.uploadCalls[0].Filename)
+	if len(ds.uploadCalls[0].Filename) != 28 || !strings.HasSuffix(ds.uploadCalls[0].Filename, ".txt") {
+		t.Fatalf("expected randomized context upload, got %q", ds.uploadCalls[0].Filename)
 	}
 	if full.HistoryText != string(ds.uploadCalls[0].Data) {
 		t.Fatalf("expected uploaded current input file to be persisted in history text")
 	}
-	if len(full.Messages) != 1 {
-		t.Fatalf("expected continuation prompt to be the only persisted message, got %#v", full.Messages)
+	if len(full.Messages) < 3 {
+		t.Fatalf("expected original conversation messages, got %#v", full.Messages)
 	}
-	if !strings.Contains(full.Messages[0].Content, "Continue from the latest state in the attached DS2API_HISTORY.txt context.") {
-		t.Fatalf("expected continuation prompt to be persisted, got %#v", full.Messages[0])
+	if !strings.Contains(full.Messages[len(full.Messages)-1].Content, "latest user turn") {
+		t.Fatalf("expected last user request in history, got %#v", full.Messages)
 	}
 }

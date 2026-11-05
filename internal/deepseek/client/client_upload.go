@@ -13,7 +13,9 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
+	"ds2api/internal/accounthealth"
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 	trans "ds2api/internal/deepseek/transport"
@@ -40,6 +42,12 @@ type UploadFileResult struct {
 }
 
 func (c *Client) UploadFile(ctx context.Context, a *auth.RequestAuth, req UploadFileRequest, maxAttempts int) (*UploadFileResult, error) {
+	releaseUpload, err := globalUploadLimiter.acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer releaseUpload()
+
 	if maxAttempts <= 0 {
 		maxAttempts = c.maxRetries
 	}
@@ -140,6 +148,12 @@ func (c *Client) UploadFile(ctx context.Context, a *auth.RequestAuth, req Upload
 		}
 		config.Logger.Warn("[upload_file] failed", "status", resp.StatusCode, "code", code, "biz_code", bizCode, "msg", msg, "biz_msg", bizMsg, "account", a.AccountID, "filename", filename)
 		powHeader = ""
+		if restriction, _ := accounthealth.Classify(payloadBytes, time.Now()); restriction != "" {
+			if c.Auth != nil {
+				c.Auth.RecordAccountFailure(a, payloadBytes)
+			}
+			return nil, &RequestFailure{Op: "upload file", Kind: FailureAccountRestricted, Message: "DeepSeek reports this account is " + restriction + "; check its status with DeepSeek"}
+		}
 		lastFailureMessage = failureMessage(msg, bizMsg, "upload file failed")
 		if isTokenInvalid(resp.StatusCode, code, bizCode, msg, bizMsg) || isAuthIndicativeBizFailure(msg, bizMsg) {
 			lastFailureKind = authFailureKind(a.UseConfigToken)
@@ -153,11 +167,6 @@ func (c *Client) UploadFile(ctx context.Context, a *auth.RequestAuth, req Upload
 					attempts++
 					continue
 				}
-			}
-			if c.Auth.SwitchAccount(ctx, a) {
-				refreshed = false
-				attempts++
-				continue
 			}
 		}
 		attempts++

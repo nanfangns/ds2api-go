@@ -5,38 +5,20 @@ import (
 	"strings"
 )
 
-const CurrentInputContextFilename = "DS2API_HISTORY.txt"
-
-const historyTranscriptTitle = "# DS2API_HISTORY.txt"
-const historyTranscriptSummary = "Prior conversation history and tool progress."
-
+// These compatibility entry points use the same private-context transcript.
 func BuildOpenAIHistoryTranscript(messages []any) string {
-	return buildOpenAIHistoryTranscript(messages)
-}
-
-func BuildOpenAICurrentUserInputTranscript(text string) string {
-	if strings.TrimSpace(text) == "" {
-		return ""
-	}
-	return buildOpenAIHistoryTranscript([]any{
-		map[string]any{"role": "user", "content": text},
-	})
+	return BuildOpenAIPrivateContextTranscript(messages)
 }
 
 func BuildOpenAICurrentInputContextTranscript(messages []any) string {
-	return buildOpenAIHistoryTranscript(messages)
+	return BuildOpenAIPrivateContextTranscript(messages)
 }
 
-func buildOpenAIHistoryTranscript(messages []any) string {
+func BuildOpenAIPrivateContextTranscript(messages []any) string {
 	if len(messages) == 0 {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString(historyTranscriptTitle)
-	b.WriteString("\n")
-	b.WriteString(historyTranscriptSummary)
-	b.WriteString("\n\n")
-
 	entry := 0
 	for _, raw := range messages {
 		msg, ok := raw.(map[string]any)
@@ -44,14 +26,13 @@ func buildOpenAIHistoryTranscript(messages []any) string {
 			continue
 		}
 		role := normalizeOpenAIRoleForPrompt(strings.ToLower(strings.TrimSpace(asString(msg["role"]))))
-		content := strings.TrimSpace(buildOpenAIHistoryEntry(role, msg))
+		content := strings.TrimSpace(buildOpenAIPrivateContextEntry(role, msg))
 		if content == "" {
 			continue
 		}
 		entry++
-		fmt.Fprintf(&b, "=== %d. %s ===\n%s\n\n", entry, strings.ToUpper(roleLabelForHistory(role)), content)
+		fmt.Fprintf(&b, "%s:\n%s\n\n", privateContextRoleLabel(role), content)
 	}
-
 	transcript := strings.TrimSpace(b.String())
 	if transcript == "" {
 		return ""
@@ -59,12 +40,12 @@ func buildOpenAIHistoryTranscript(messages []any) string {
 	return transcript + "\n"
 }
 
-func buildOpenAIHistoryEntry(role string, msg map[string]any) string {
+func buildOpenAIPrivateContextEntry(role string, msg map[string]any) string {
 	switch role {
 	case "assistant":
 		return strings.TrimSpace(buildAssistantContentForPrompt(msg))
 	case "tool", "function":
-		return strings.TrimSpace(buildToolHistoryContent(msg))
+		return strings.TrimSpace(buildPrivateContextToolContent(msg))
 	case "system", "user":
 		return strings.TrimSpace(NormalizeOpenAIContentForPrompt(msg["content"]))
 	default:
@@ -72,7 +53,7 @@ func buildOpenAIHistoryEntry(role string, msg map[string]any) string {
 	}
 }
 
-func buildToolHistoryContent(msg map[string]any) string {
+func buildPrivateContextToolContent(msg map[string]any) string {
 	content := strings.TrimSpace(NormalizeOpenAIContentForPrompt(msg["content"]))
 	parts := make([]string, 0, 2)
 	if name := strings.TrimSpace(asString(msg["name"])); name != "" {
@@ -95,14 +76,22 @@ func buildToolHistoryContent(msg map[string]any) string {
 	}
 }
 
-func roleLabelForHistory(role string) string {
+func privateContextRoleLabel(role string) string {
 	role = strings.ToLower(strings.TrimSpace(role))
 	switch role {
 	case "function":
-		return "tool"
+		return "Tool"
+	case "system":
+		return "System"
+	case "assistant":
+		return "Assistant"
+	case "tool":
+		return "Tool"
+	case "user":
+		return "User"
 	case "":
-		return "unknown"
+		return "User"
 	default:
-		return role
+		return strings.ToUpper(role[:1]) + role[1:]
 	}
 }

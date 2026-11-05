@@ -72,7 +72,7 @@ func TestTestAccount_BatchModeOnlyCreatesSession(t *testing.T) {
 		t.Fatal("expected test account")
 	}
 
-	result := h.testAccount(context.Background(), acc, "deepseek-v4-flash", "")
+	result := h.testAccount(context.Background(), acc, "deepseek-flash", "")
 
 	if ok, _ := result["success"].(bool); !ok {
 		t.Fatalf("expected success=true, got %#v", result)
@@ -168,44 +168,25 @@ func (m *completionPayloadDSMock) GetSessionCountForToken(_ context.Context, _ s
 }
 
 func TestTestAccount_MessageModeUsesExpertModelTypeForExpertModel(t *testing.T) {
-	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd","token":"seed-token"}]}`)
+	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd"}]}`)
 	store := config.LoadStore()
 	ds := &completionPayloadDSMock{}
 	h := &Handler{Store: store, DS: ds}
-	acc, ok := store.FindAccount("batch@example.com")
-	if !ok {
-		t.Fatal("expected test account")
-	}
-
+	acc, _ := store.FindAccount("batch@example.com")
 	result := h.testAccount(context.Background(), acc, "deepseek-v4-pro", "hello")
-
-	if ok, _ := result["success"].(bool); !ok {
-		t.Fatalf("expected success=true, got %#v", result)
-	}
-	if got := ds.payload["model_type"]; got != "expert" {
-		t.Fatalf("expected model_type expert, got %#v", got)
-	}
-	if got := ds.payload["chat_session_id"]; got != "session-id" {
-		t.Fatalf("unexpected chat_session_id: %#v", got)
+	if ok, _ := result["success"].(bool); ok || ds.payload != nil {
+		t.Fatalf("retired model should be rejected before upstream request: %v", result)
 	}
 }
 
 func TestTestAccount_MessageModeUsesVisionModelTypeForVisionModel(t *testing.T) {
-	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd","token":"seed-token"}]}`)
+	t.Setenv("DS2API_CONFIG_JSON", `{"accounts":[{"email":"batch@example.com","password":"pwd"}]}`)
 	store := config.LoadStore()
 	ds := &completionPayloadDSMock{}
 	h := &Handler{Store: store, DS: ds}
-	acc, ok := store.FindAccount("batch@example.com")
-	if !ok {
-		t.Fatal("expected test account")
-	}
-
+	acc, _ := store.FindAccount("batch@example.com")
 	result := h.testAccount(context.Background(), acc, "deepseek-v4-vision", "hello")
-
-	if ok, _ := result["success"].(bool); !ok {
-		t.Fatalf("expected success=true, got %#v", result)
-	}
-	if got := ds.payload["model_type"]; got != "vision" {
-		t.Fatalf("expected model_type vision, got %#v", got)
+	if ok, _ := result["success"].(bool); ok || ds.payload != nil {
+		t.Fatalf("retired model should be rejected before upstream request: %v", result)
 	}
 }

@@ -18,24 +18,6 @@ const DEFAULT_FORM = {
     auto_delete: { mode: 'none' },
     current_input_file: { enabled: true, min_chars: 0 },
     thinking_injection: { enabled: true, prompt: '', default_prompt: '' },
-    model_aliases_text: '{}',
-}
-
-function parseJSONMap(raw, fieldName, t) {
-    const text = String(raw || '').trim()
-    if (!text) {
-        return {}
-    }
-    let parsed
-    try {
-        parsed = JSON.parse(text)
-    } catch (_e) {
-        throw new Error(t('settings.invalidJsonField', { field: fieldName }))
-    }
-    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-        throw new Error(t('settings.invalidJsonField', { field: fieldName }))
-    }
-    return parsed
 }
 
 function normalizeAutoDeleteMode(raw) {
@@ -77,7 +59,6 @@ function fromServerForm(data) {
             prompt: data.thinking_injection?.prompt || '',
             default_prompt: data.thinking_injection?.default_prompt || '',
         },
-        model_aliases_text: JSON.stringify(data.model_aliases || {}, null, 2),
     }
 }
 
@@ -179,18 +160,7 @@ export function useSettingsForm({ apiFetch, t, onMessage, onRefresh, onForceLogo
     }, [loadSettings])
 
     const saveSettings = useCallback(async () => {
-        let modelAliases = {}
-        try {
-            modelAliases = parseJSONMap(form.model_aliases_text, 'model_aliases', t)
-        } catch (e) {
-            onMessage('error', e.message)
-            return
-        }
-
-        const payload = {
-            ...toServerPayload(form),
-            model_aliases: modelAliases,
-        }
+        const payload = toServerPayload(form)
 
         setSaving(true)
         try {

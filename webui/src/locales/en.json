@@ -78,7 +78,7 @@
         "features": {
             "compatibility": {
                 "title": "Full Compatibility",
-                "desc": "OpenAI & Claude format support"
+                "desc": "OpenAI format support"
             },
             "loadBalancing": {
                 "title": "Load Balancing",
@@ -267,7 +267,7 @@
         "loading": "Loading conversation history...",
         "loadFailed": "Failed to load conversation history.",
         "retentionTitle": "Retention",
-        "retentionDesc": "The server keeps only the latest N DeepSeek upstream response records across OpenAI Chat, OpenAI Responses, Claude, and Gemini direct interfaces.",
+        "retentionDesc": "The server keeps only the latest N DeepSeek upstream response records across OpenAI Chat and OpenAI Responses interfaces.",
         "off": "OFF",
         "refresh": "Refresh",
         "clearAll": "Clear all",
@@ -396,12 +396,12 @@
         "responsesTTL": "Responses store TTL (seconds)",
         "embeddingsProvider": "Embeddings provider",
         "thinkingInjectionEnabled": "Thinking format injection",
-        "thinkingInjectionDesc": "Append a structured <think> checklist to the latest user message before prompt assembly.",
+        "thinkingInjectionDesc": "Add the reasoning instruction to the system prompt.",
         "thinkingInjectionPrompt": "Thinking format prompt",
         "thinkingInjectionPromptHelp": "Leave empty to use the built-in default prompt shown as the input placeholder.",
         "currentInputFileTitle": "Independent Split",
         "currentInputFileEnabled": "Independent split (by size)",
-        "currentInputFileDesc": "Enabled by default. Once the character threshold is reached, upload the full context as a DS2API_HISTORY.txt context file.",
+        "currentInputFileDesc": "Enabled by default. Once the threshold is reached, upload the conversation as a context file.",
         "currentInputFileMinChars": "Current input threshold (characters)",
         "currentInputFileHelp": "Default is 0, which uses independent split for any non-empty input.",
         "modelTitle": "Model mapping",

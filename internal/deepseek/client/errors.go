@@ -12,6 +12,7 @@ const (
 	FailureDirectUnauthorized  FailureKind = "direct_unauthorized"
 	FailureManagedUnauthorized FailureKind = "managed_unauthorized"
 	FailureDeviceRejected      FailureKind = "device_rejected"
+	FailureAccountRestricted   FailureKind = "account_restricted"
 )
 
 type RequestFailure struct {
@@ -48,4 +49,9 @@ func IsManagedUnauthorizedError(err error) bool {
 func IsDirectUnauthorizedError(err error) bool {
 	var failure *RequestFailure
 	return errors.As(err, &failure) && failure.Kind == FailureDirectUnauthorized
+}
+
+func IsAccountRestrictedError(err error) bool {
+	var failure *RequestFailure
+	return errors.As(err, &failure) && failure.Kind == FailureAccountRestricted
 }

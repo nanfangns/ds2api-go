@@ -84,6 +84,10 @@ func (h *Handler) UploadFile(w http.ResponseWriter, r *http.Request) {
 		Data:        data,
 	}, 3)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			shared.WriteOpenAIError(w, http.StatusServiceUnavailable, "The DeepSeek account is restricted; check its status with DeepSeek.")
+			return
+		}
 		shared.WriteOpenAIError(w, http.StatusInternalServerError, "Failed to upload file.")
 		return
 	}

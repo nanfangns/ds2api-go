@@ -78,7 +78,7 @@
         "features": {
             "compatibility": {
                 "title": "全面兼容",
-                "desc": "适配 OpenAI 与 Claude 格式"
+                "desc": "适配 OpenAI 格式"
             },
             "loadBalancing": {
                 "title": "负载均衡",
@@ -267,7 +267,7 @@
         "loading": "正在加载对话记录...",
         "loadFailed": "加载对话记录失败",
         "retentionTitle": "保留条数",
-        "retentionDesc": "服务器端只保留最新 N 条 DeepSeek 上游响应记录，覆盖 OpenAI Chat、OpenAI Responses、Claude 和 Gemini 直连接口。",
+        "retentionDesc": "服务器端只保留最新 N 条 DeepSeek 上游响应记录，覆盖 OpenAI Chat 和 OpenAI Responses 接口。",
         "off": "OFF",
         "refresh": "刷新",
         "clearAll": "清空全部",
@@ -401,7 +401,7 @@
         "thinkingInjectionPromptHelp": "留空时使用内置默认提示词；默认内容会显示在输入框占位文本中。",
         "currentInputFileTitle": "独立拆分",
         "currentInputFileEnabled": "独立拆分（按量）",
-        "currentInputFileDesc": "默认开启。达到字符阈值后，将完整上下文上传为 DS2API_HISTORY.txt 上下文文件。",
+        "currentInputFileDesc": "默认开启。达到阈值时，将对话内容上传为上下文文件。",
         "currentInputFileMinChars": "当前输入阈值（字符数）",
         "currentInputFileHelp": "默认 0，表示只要有输入就会使用独立拆分。",
         "modelTitle": "模型映射",

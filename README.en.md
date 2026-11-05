@@ -16,7 +16,7 @@
 
 Language: [中文](README.MD) | [English](README.en.md)
 
-DS2API converts DeepSeek Web chat capability into OpenAI-compatible, Claude-compatible, and Gemini-compatible APIs. The core backend is Go-based, with a small Node Runtime bridge used for Vercel streaming, and the React WebUI admin panel lives in `webui/` (build output auto-generated to `static/admin` during deployment).
+DS2API converts DeepSeek Web chat capability into an OpenAI-compatible API. The core backend is Go-based, with a container for Vercel, and the React WebUI admin panel lives in `webui/` (build output auto-generated to `static/admin` during deployment).
 
 Documentation entry: [Docs Index](docs/README.md) / [Architecture](docs/ARCHITECTURE.en.md) / [API Reference](API.en.md)
 
@@ -44,9 +44,6 @@ Documentation entry: [Docs Index](docs/README.md) / [Architecture](docs/ARCHITEC
 - [Key Capabilities](#key-capabilities)
 - [Platform Compatibility Matrix](#platform-compatibility-matrix)
 - [Model Support](#model-support)
-  - [OpenAI Endpoint](#openai-endpoint-get-v1models)
-  - [Claude Endpoint](#claude-endpoint-get-anthropicv1models)
-  - [Gemini Endpoint](#gemini-endpoint)
 - [Quick Start](#quick-start)
   - [Option 1: Download Release Binaries](#option-1-download-release-binaries)
   - [Option 2: Docker / GHCR](#option-2-docker--ghcr)
@@ -64,132 +61,25 @@ Documentation entry: [Docs Index](docs/README.md) / [Architecture](docs/ARCHITEC
 
 ## Architecture Overview (Summary)
 
-```mermaid
-flowchart LR
-    Client["🖥️ Clients / SDKs\n(OpenAI / Claude / Gemini)"]
-    Upstream["☁️ DeepSeek API"]
-
-    subgraph DS2API["DS2API 4.x (Modular HTTP Surface + PromptCompat Core)"]
-        Router["chi Router + Middleware\n(RequestID / RealIP / Logger / Recoverer / CORS)"]
-
-        subgraph HTTP["HTTP API Surface"]
-            OA["OpenAI\nchat / responses / files / embeddings"]
-            CA["Claude\n/anthropic/* + /v1/messages"]
-            GA["Gemini\n/v1beta/models/* + /v1/models/*"]
-            Admin["Admin API\nresource packages"]
-            WebUI["WebUI\n/admin (static hosting)"]
-            Vercel["Vercel Node Stream\n/v1/chat/completions"]
-        end
-
-        subgraph Runtime["Runtime + Core Capabilities"]
-            Compat["PromptCompat\n(API -> web-chat plain text context)"]
-            Completion["Completion Runtime\n(session / PoW / completion)"]
-            Turn["AssistantTurn\n(output semantic normalization)"]
-            Auth["Auth Resolver\n(API key / bearer / x-goog-api-key)"]
-            Pool["Account Pool + Queue\n(in-flight slots + wait queue)"]
-            DSClient["DeepSeek Client\n(session / auth / completion / files)"]
-            Pow["PoW Solver\n(Pure Go)"]
-            Tool["Tool Sieve\n(Go/Node semantic parity)"]
-            History["Current Input File\n(DS2API_HISTORY.txt)"]
-        end
-    end
-
-    Client --> Router
-    Router --> OA & CA & GA
-    Router --> Admin
-    Router --> WebUI
-    Router --> Vercel
-
-    OA --> Compat
-    CA & GA --> Compat
-    Compat --> Completion
-    Completion -.full context.-> History
-    Completion --> Turn
-    Vercel -.Go prepare.-> Completion
-    Vercel -.Node SSE.-> Tool
-    Completion --> Auth
-    Completion -.account rotation.-> Pool
-    Completion -.tool-call parsing.-> Tool
-    Completion -.PoW solving.-> Pow
-    Auth --> DSClient
-    DSClient --> Upstream
-    Upstream --> DSClient
-    Turn --> Client
-    Vercel --> Client
-```
-
-For the full module-by-module architecture and directory responsibilities, see [docs/ARCHITECTURE.en.md](docs/ARCHITECTURE.en.md).
-
-- **Backend**: Go (`cmd/ds2api/`, `api/`, `internal/`), no Python runtime
-- **Frontend**: React admin panel (`webui/`), served as static build at runtime
-- **Deployment**: local run, Docker, Vercel serverless, Linux systemd
+The Go gateway normalizes OpenAI Chat and Responses requests and uses DeepSeek Web sessions, PoW, and files. The React admin panel manages configuration and accounts. The Vercel container runs the gateway and device-harvest service. See [prompt compatibility](docs/prompt-compatibility.md).
 
 ## Key Capabilities
 
-| Capability | Details |
-| --- | --- |
-| OpenAI compatible | `GET /v1/models`, `GET /v1/models/{id}`, `POST /v1/chat/completions`, `POST /v1/responses`, `GET /v1/responses/{response_id}`, `POST /v1/embeddings`, `POST /v1/files`, `GET /v1/files/{file_id}` |
-| Claude compatible | `GET /anthropic/v1/models`, `POST /anthropic/v1/messages`, `POST /anthropic/v1/messages/count_tokens` (plus shortcut paths `/v1/messages`, `/messages`) |
-| Gemini compatible | `POST /v1beta/models/{model}:generateContent`, `POST /v1beta/models/{model}:streamGenerateContent` (plus `/v1/models/{model}:*` paths) |
-| Ollama compatible | `GET /api/version`, `GET /api/tags`, `POST /api/show` |
-| Unified CORS compatibility | `/v1/*`, `/anthropic/*`, `/v1beta/models/*`, `/api/*`, and `/admin/*` share one CORS policy; on Vercel, the Node Runtime for `/v1/chat/completions` mirrors the same relaxed preflight behavior for third-party clients |
-| Multi-account rotation | Auto token refresh, email/mobile dual login |
-| Concurrency control | Per-account in-flight limit + waiting queue, dynamic recommended concurrency |
-| DeepSeek PoW | Pure Go high-performance solver (DeepSeekHashV1), ms-level response |
-| Tool Calling | Anti-leak handling: non-code-block feature match, early `delta.tool_calls`, structured incremental output |
-| Admin API | Config management, runtime settings hot-reload, proxy management, account testing/batch test, session cleanup, import/export, Vercel sync, version check |
-| WebUI Admin Panel | SPA at `/admin` (bilingual Chinese/English, dark mode, with server-side conversation history) |
-| Health Probes | `GET /healthz` (liveness), `GET /readyz` (readiness) |
-
-OpenAI `/v1/*` routes remain canonical, and DS2API also accepts root shortcuts such as `/models`, `/chat/completions`, `/responses`, `/embeddings`, `/files`, and `/files/{file_id}` for clients configured with the bare service URL.
+- OpenAI-compatible models, Chat, Responses, files and embeddings endpoints. Embeddings are unconfigured by default; the built-in mode returns deterministic test vectors only.
+- Streaming, tool calls, image input, multiple accounts and the admin panel.
+- Local, Docker and Vercel container deployment. Runtime account state in environment-variable mode is not shared durably between Vercel instances.
 
 ## Platform Compatibility Matrix
 
-| Tier | Platform | Status |
-| --- | --- | --- |
-| P0 | Codex CLI/SDK (`wire_api=chat` / `wire_api=responses`) | ✅ |
-| P0 | OpenAI SDK (JS/Python, chat + responses) | ✅ |
-| P0 | Vercel AI SDK (openai-compatible) | ✅ |
-| P0 | Anthropic SDK (messages) | ✅ |
-| P0 | Google Gemini SDK (generateContent) | ✅ |
-| P1 | LangChain / LlamaIndex / OpenWebUI (OpenAI-compatible integration) | ✅ |
+Clients using the OpenAI-compatible protocol can connect by selecting the supported model. Dedicated Claude, Gemini and Ollama routes have been removed.
 
 ## Model Support
 
-### OpenAI Endpoint (`GET /v1/models`)
-
-| Family | Model ID | thinking | search |
+| Model ID | Upstream channel | Thinking | Search |
 | --- | --- | --- | --- |
-| default | `deepseek-v4-flash` | enabled by default, request-controlled | ❌ |
-| expert | `deepseek-v4-pro` | enabled by default, request-controlled | ❌ |
-| default | `deepseek-v4-flash-search` | enabled by default, request-controlled | ✅ |
-| expert | `deepseek-v4-pro-search` | enabled by default, request-controlled | ✅ |
-| vision | `deepseek-v4-vision` | enabled by default, request-controlled | ❌ |
+| `deepseek-flash` | `default` | Enabled by default; use `thinking: false` to disable | Disabled |
 
-Besides native IDs, DS2API also accepts common aliases as input (for example `gpt-4.1`, `gpt-5`, `gpt-5-codex`, `o3`, `claude-*`, `gemini-*`), but `/v1/models` returns normalized DeepSeek native model IDs. The complete alias behavior is documented in [API.en.md](API.en.md#model-alias-resolution) and `config.example.json`.
-Current upstream vision support exposes only the `vision` lane and does not provide a separate search-enabled vision variant.
-
-### Claude Endpoint (`GET /anthropic/v1/models`)
-
-| Current common model | Default Mapping |
-| --- | --- |
-| `claude-sonnet-4-6` | `deepseek-v4-flash` |
-| `claude-haiku-4-5` (compatible with `claude-3-5-haiku-latest`) | `deepseek-v4-flash` |
-| `claude-opus-4-6` | `deepseek-v4-pro` |
-
-Override mapping via the global `model_aliases` config.
-Besides the primary aliases above, `/anthropic/v1/models` also returns Claude 4.x snapshots plus historical 3.x IDs and common aliases for legacy client compatibility.
-
-#### Claude Code integration pitfalls (validated)
-
-- Set `ANTHROPIC_BASE_URL` to the DS2API root URL (for example `http://127.0.0.1:5001`). Claude Code sends requests to `/v1/messages?beta=true`.
-- `ANTHROPIC_API_KEY` must match an entry in `keys` from `config.json`. Keeping both a regular key and an `sk-ant-*` style key improves client compatibility.
-- If your environment has proxy variables, set `NO_PROXY=127.0.0.1,localhost,<your_host_ip>` for DS2API to avoid proxy interception of local traffic.
-- If tool calls are rendered as plain text and not executed, first verify the model output uses the recommended halfwidth-pipe DSML block: `<|DSML|tool_calls><|DSML|invoke name="..."><|DSML|parameter name="...">...`. DS2API also accepts legacy canonical XML: `<tool_calls><invoke name="..."><parameter name="...">...`; legacy `<tools>` / `<tool_call>` / `<tool_name>` / `<param>`, `<function_call>`, `tool_use`, or standalone JSON `tool_calls` are not executed and stay plain text.
-
-### Gemini Endpoint
-
-The Gemini adapter maps model names to DeepSeek native models via `model_aliases` or exact built-in aliases (covering common `gemini-2.5-*`, `gemini-3*`, and `gemini-pro-vision` names), supporting both `generateContent` and `streamGenerateContent` call patterns with full Tool Calling support (`functionDeclarations` → `functionCall` output). If the Gemini model name has a `-nothinking` suffix, such as `gemini-2.5-pro-nothinking`, it maps to the corresponding forced no-thinking model.
+The old `deepseek-v4-*`, model aliases and `-nothinking` IDs have been removed. Update existing clients to use `deepseek-flash`.
 
 ## Quick Start
 
@@ -284,7 +174,7 @@ Recommended: convert `config.json` to Base64 locally, then paste into `DS2API_CO
 base64 < config.json | tr -d '\n'
 ```
 
-> **Streaming note**: OpenAI Chat streaming on Vercel is routed to `api/chat-stream.js` (Node Runtime), but `vercel.json` rewrites only the canonical `/v1/chat/completions` path to Node; the root shortcut `/chat/completions` stays on the Go main path. Auth, account selection, and session/PoW preparation are still handled by the Go internal prepare endpoint; streaming output (including `tools`) is assembled on Node with Go-aligned anti-leak handling. Use `/v1/chat/completions` on Vercel when real-time streaming is required.
+> **Vercel**: The container runs the Go gateway and a local device-harvest service; streaming is served directly by Go. Runtime files and account state are not guaranteed to persist across instances.
 
 For detailed deployment instructions, see the [Deployment Guide](docs/DEPLOY.en.md).
 
@@ -319,17 +209,16 @@ Common fields:
 
 - `keys` / `api_keys`: client API keys; `api_keys` adds `name` and `remark` metadata while `keys` remains compatible.
 - `accounts`: managed DeepSeek accounts, supporting `email` or `mobile` login plus proxy/name/remark metadata.
-- `model_aliases`: one shared alias map for OpenAI / Claude / Gemini model names.
 - `runtime`: account concurrency, queueing, and token refresh behavior, hot-reloadable via Admin Settings.
 - `auto_delete.mode`: remote session cleanup after each request, supporting `none` / `single` / `all`.
-- `current_input_file`: the global context split/upload mode; it is enabled by default and uploads the full context as a `DS2API_HISTORY.txt` context file once the character threshold is reached.
+- `current_input_file`: the global context split/upload mode; it is enabled by default and uploads non-system messages as a randomly named context file once the character threshold is reached.
 - If you turn off `current_input_file`, requests pass through directly without uploading any split context file.
 
 For the full environment variable list, see [docs/DEPLOY.en.md](docs/DEPLOY.en.md). For auth behavior, see [API.en.md](API.en.md#authentication).
 
 ## Authentication Modes
 
-For business endpoints (`/v1/*`, `/anthropic/*`, Gemini routes), DS2API supports two modes:
+For business endpoints (`/v1/*`), DS2API supports two modes:
 
 | Mode | Description |
 | --- | --- |
@@ -338,7 +227,6 @@ For business endpoints (`/v1/*`, `/anthropic/*`, Gemini routes), DS2API supports
 
 Optional header `X-Ds2-Target-Account`: Pin a specific managed account (value is email or mobile).
 When no target account is pinned, if a completion would end as `429 upstream_empty_output` after the same-account empty-output retry, managed-account mode switches to the next available account, creates a fresh session, and retries the original payload once.
-Gemini routes also accept `x-goog-api-key`, or `?key=` / `?api_key=` when no auth header is present.
 
 ## Concurrency Model
 
@@ -356,16 +244,7 @@ Queue limit = DS2API_ACCOUNT_MAX_QUEUE (default = recommended concurrency)
 
 ## Tool Call Adaptation
 
-When `tools` is present in the request, DS2API performs anti-leak handling:
-
-1. Toolcall feature matching is enabled only in **non-code-block context** (fenced examples are ignored)
-2. The parser treats the halfwidth-pipe DSML shell as the recommended executable tool-calling syntax: `<|DSML|tool_calls>` → `<|DSML|invoke name="...">` → `<|DSML|parameter name="...">`; it also accepts legacy canonical XML `<tool_calls>` → `<invoke name="...">` → `<parameter name="...">`, plus common DSML prefix/separator drift. DSML is a shell alias and internal parsing remains XML-based; legacy `<tools>` / `<tool_call>` / `<tool_name>` / `<param>`, `<function_call>`, `tool_use`, antml variants, and standalone JSON `tool_calls` payloads are treated as plain text, and complete but malformed wrappers are released as plain text too
-3. `responses` streaming strictly uses official item lifecycle events (`response.output_item.*`, `response.content_part.*`, `response.function_call_arguments.*`)
-4. `responses` supports and enforces `tool_choice` (`auto`/`none`/`required`/forced function); `required` violations return `422` for non-stream and `response.failed` for stream
-5. The output protocol follows the client request (OpenAI / Claude / Gemini native shapes); model-side prompting can prefer XML, and the compatibility layer handles the protocol-specific translation
-
-> Note: the current parser still prioritizes “parse successfully whenever possible”; hard allow-list rejection for undeclared tool names is not enabled yet.
-> Explicit empty strings or whitespace-only parameters are preserved by the parser; prompting tells the model not to emit blank parameters, and missing/empty argument rejection belongs in the tool executor or client schema validation.
+Tool definitions remain in the live prompt. The compatibility layer parses model output and returns OpenAI tool-call structures. See [prompt compatibility](docs/prompt-compatibility.md) for context and file-account ownership.
 
 ## Local Dev Packet Capture
 

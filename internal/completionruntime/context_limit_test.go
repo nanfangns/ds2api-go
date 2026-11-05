@@ -37,7 +37,7 @@ func TestContextGateErrorReturnsBadRequestBeforeUpstream(t *testing.T) {
 	})
 
 	stdReq := promptcompat.StandardRequest{
-		ResolvedModel: "deepseek-v4-flash",
+		ResolvedModel: "deepseek-flash",
 		RefFileTokens: 2_850_001,
 		PassThrough:   map[string]any{"max_tokens": float64(100)},
 	}

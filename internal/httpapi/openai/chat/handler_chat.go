@@ -20,23 +20,6 @@ import (
 )
 
 func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
-	if isVercelStreamReleaseRequest(r) {
-		h.handleVercelStreamRelease(w, r)
-		return
-	}
-	if isVercelStreamPowRequest(r) {
-		h.handleVercelStreamPow(w, r)
-		return
-	}
-	if isVercelStreamSwitchRequest(r) {
-		h.handleVercelStreamSwitch(w, r)
-		return
-	}
-	if isVercelStreamPrepareRequest(r) {
-		h.handleVercelStreamPrepare(w, r)
-		return
-	}
-
 	a, err := h.Auth.Determine(r)
 	if err != nil {
 		status := http.StatusUnauthorized
@@ -63,6 +46,10 @@ func (h *Handler) ChatCompletions(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeOpenAIError(w, http.StatusBadRequest, "invalid json")
+		return
+	}
+	if err := promptcompat.ValidateOpenAIModel(h.Store, req, "request must include 'model' and 'messages'"); err != nil {
+		writeOpenAIError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if err := h.preprocessInlineFileInputs(r.Context(), a, req); err != nil {

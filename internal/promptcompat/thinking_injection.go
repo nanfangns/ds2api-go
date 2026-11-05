@@ -3,17 +3,24 @@ package promptcompat
 import "strings"
 
 const (
-	ThinkingInjectionMarker        = "Reasoning Effort: Absolute maximum with no shortcuts permitted."
+	ThinkingInjectionMarker        = "Reasoning strength: give full effort; shortcuts and half-measures are forbidden."
 	DefaultThinkingInjectionPrompt = ThinkingInjectionMarker + "\n" +
-		"You MUST be very thorough in your thinking and comprehensively decompose the problem to resolve the root cause, rigorously stress-testing your logic against all potential paths, edge cases, and adversarial scenarios.\n" +
-		"Keep deliberation in the thinking process; provide a clear answer without exposing internal monologue."
+		"Break the problem down to root causes. Strictly inspect likely paths, edge cases, and adversarial cases. Keep reasoning in the thinking process only; do not put monologue in the final user-facing answer."
 )
 
+// AppendThinkingInjectionToLatestUser is retained for callers; it injects into system.
 func AppendThinkingInjectionToLatestUser(messages []any) ([]any, bool) {
-	return AppendThinkingInjectionPromptToLatestUser(messages, "")
+	return AppendThinkingInjectionPrompt(messages, "")
 }
 
+// AppendThinkingInjectionPromptToLatestUser is retained for callers; it injects into system.
 func AppendThinkingInjectionPromptToLatestUser(messages []any, injectionPrompt string) ([]any, bool) {
+	return AppendThinkingInjectionPrompt(messages, injectionPrompt)
+}
+
+// AppendThinkingInjectionPrompt appends the thinking-strength instruction to the
+// first system/developer message (or creates a system message when none exist).
+func AppendThinkingInjectionPrompt(messages []any, injectionPrompt string) ([]any, bool) {
 	if len(messages) == 0 {
 		return messages, false
 	}
@@ -21,30 +28,50 @@ func AppendThinkingInjectionPromptToLatestUser(messages []any, injectionPrompt s
 	if injectionPrompt == "" {
 		injectionPrompt = DefaultThinkingInjectionPrompt
 	}
-	for i := len(messages) - 1; i >= 0; i-- {
-		msg, ok := messages[i].(map[string]any)
+
+	sysIdx := -1
+	for i, item := range messages {
+		msg, ok := item.(map[string]any)
 		if !ok {
 			continue
 		}
-		if strings.ToLower(strings.TrimSpace(asString(msg["role"]))) != "user" {
+		if !isSystemRoleForPrompt(asString(msg["role"])) {
 			continue
 		}
-		content := msg["content"]
-		normalizedContent := NormalizeOpenAIContentForPrompt(content)
-		if strings.Contains(normalizedContent, ThinkingInjectionMarker) || strings.Contains(normalizedContent, injectionPrompt) {
+		if sysIdx < 0 {
+			sysIdx = i
+		}
+		content := NormalizeOpenAIContentForPrompt(msg["content"])
+		if strings.Contains(content, ThinkingInjectionMarker) || strings.Contains(content, injectionPrompt) {
 			return messages, false
 		}
-		updatedContent := appendThinkingInjectionToContent(content, injectionPrompt)
-		out := append([]any(nil), messages...)
-		cloned := make(map[string]any, len(msg))
+	}
+
+	out := append([]any(nil), messages...)
+	if sysIdx >= 0 {
+		msg := out[sysIdx].(map[string]any)
+		cloned := make(map[string]any, len(msg)+1)
 		for k, v := range msg {
 			cloned[k] = v
 		}
-		cloned["content"] = updatedContent
-		out[i] = cloned
+		cloned["content"] = appendThinkingInjectionToContent(msg["content"], injectionPrompt)
+		out[sysIdx] = cloned
 		return out, true
 	}
-	return messages, false
+
+	live := make([]any, 0, len(out)+1)
+	live = append(live, map[string]any{"role": "system", "content": injectionPrompt})
+	live = append(live, out...)
+	return live, true
+}
+
+func isSystemRoleForPrompt(role string) bool {
+	switch strings.ToLower(strings.TrimSpace(role)) {
+	case "system", "developer":
+		return true
+	default:
+		return false
+	}
 }
 
 func appendThinkingInjectionToContent(content any, injectionPrompt string) any {

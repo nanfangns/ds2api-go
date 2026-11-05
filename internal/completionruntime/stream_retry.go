@@ -9,6 +9,7 @@ import (
 	"ds2api/internal/assistantturn"
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
+	dsclient "ds2api/internal/deepseek/client"
 	"ds2api/internal/httpapi/openai/history"
 	"ds2api/internal/httpapi/openai/shared"
 	"ds2api/internal/promptcompat"
@@ -58,7 +59,7 @@ func ExecuteStreamWithRetry(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 	currentResp := initialResp
 	currentPayload := clonePayload(payload)
 	for {
-		allowAccountSwitch := opts.RetryEnabled && attempts >= retryMax && !accountSwitchAttempted && a != nil && a.UseConfigToken
+		allowAccountSwitch := opts.RetryEnabled && attempts >= retryMax && !accountSwitchAttempted && a != nil && a.UseConfigToken && canMoveRefs(opts.Request, opts.CurrentInputFile != nil)
 		terminalWritten, retryable := hooks.ConsumeAttempt(currentResp, opts.RetryEnabled && (attempts < retryMax || allowAccountSwitch))
 		if terminalWritten {
 			if hooks.OnTerminal != nil {
@@ -74,7 +75,7 @@ func ExecuteStreamWithRetry(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 		}
 
 		if attempts >= retryMax {
-			if canRetryOnAlternateAccount(ctx, a, &assistantturn.OutputError{Status: http.StatusTooManyRequests}, opts.RetryEnabled, &accountSwitchAttempted) {
+			if canRetryOnAlternateAccount(ctx, a, opts.Request, opts.CurrentInputFile != nil, &assistantturn.OutputError{Status: http.StatusTooManyRequests}, opts.RetryEnabled, &accountSwitchAttempted) {
 				switched, switchErr := startPayloadCompletionOnAlternateAccount(ctx, ds, a, payload, opts, maxAttempts)
 				if switchErr != nil {
 					if hooks.OnRetryFailure != nil {
@@ -110,6 +111,13 @@ func ExecuteStreamWithRetry(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 		config.Logger.Info("[completion_runtime_empty_retry] attempting synthetic retry", "surface", surface, "stream", opts.Stream, "retry_attempt", attempts, "parent_message_id", parentMessageID)
 		retryPow, powErr := ds.GetPow(ctx, a, maxAttempts)
 		if powErr != nil {
+			if dsclient.IsAccountRestrictedError(powErr) {
+				if hooks.OnRetryFailure != nil {
+					err := accountRestrictedOutputError()
+					hooks.OnRetryFailure(err.Status, err.Message, err.Code)
+				}
+				return
+			}
 			config.Logger.Warn("[completion_runtime_empty_retry] retry PoW fetch failed, falling back to original PoW", "surface", surface, "stream", opts.Stream, "retry_attempt", attempts, "error", powErr)
 			retryPow = pow
 		}
@@ -149,10 +157,16 @@ func ExecuteStreamWithRetry(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 func startPayloadCompletionOnAlternateAccount(ctx context.Context, ds DeepSeekCaller, a *auth.RequestAuth, payload map[string]any, opts StreamRetryOptions, maxAttempts int) (StartResult, *assistantturn.OutputError) {
 	sessionID, err := ds.CreateSession(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{}, accountRestrictedOutputError()
+		}
 		return StartResult{}, authOutputError(a)
 	}
 	pow, err := ds.GetPow(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{SessionID: sessionID}, accountRestrictedOutputError()
+		}
 		return StartResult{SessionID: sessionID}, &assistantturn.OutputError{Status: http.StatusUnauthorized, Message: "Failed to get PoW (invalid token or unknown error).", Code: "error"}
 	}
 	nextPayload := clonePayload(payload)

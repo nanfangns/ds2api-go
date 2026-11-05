@@ -6,6 +6,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"ds2api/internal/toolcall"
 )
 
 var promptXMLTextEscaper = strings.NewReplacer(
@@ -16,14 +18,13 @@ var promptXMLTextEscaper = strings.NewReplacer(
 
 var promptXMLNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_.:-]*$`)
 
-const (
-	promptDSMLToolCallsOpen  = "<|DSML|tool_calls>"
-	promptDSMLToolCallsClose = "</|DSML|tool_calls>"
-	promptDSMLInvokeOpen     = "<|DSML|invoke"
-	promptDSMLInvokeClose    = "</|DSML|invoke>"
-	promptDSMLParameterOpen  = "<|DSML|parameter"
-	promptDSMLParameterClose = "</|DSML|parameter>"
-)
+func markupParameterOpen(paramName string) string {
+	return toolcall.MarkupParamOpen(escapeXMLAttribute(paramName))
+}
+
+func markupParameterClose() string {
+	return toolcall.MarkupPipeCloseTag(toolcall.MarkupTagParameter)
+}
 
 // FormatToolCallsForPrompt renders a tool_calls slice into the prompt-visible
 // invoke/parameter history block used across adapters.
@@ -47,33 +48,7 @@ func FormatToolCallsForPrompt(raw any) string {
 	if len(blocks) == 0 {
 		return ""
 	}
-	return promptDSMLToolCallsOpen + "\n" + strings.Join(blocks, "\n") + "\n" + promptDSMLToolCallsClose
-}
-
-// StringifyToolCallArguments normalizes tool arguments into a compact string
-// while preserving raw concatenated payloads when they already look like model
-// output rather than a single JSON object.
-func StringifyToolCallArguments(v any) string {
-	switch x := v.(type) {
-	case nil:
-		return "{}"
-	case string:
-		s := strings.TrimSpace(x)
-		if s == "" {
-			return "{}"
-		}
-		s = normalizeToolArgumentString(s)
-		if s == "" {
-			return "{}"
-		}
-		return s
-	default:
-		b, err := json.Marshal(x)
-		if err != nil || len(b) == 0 {
-			return "{}"
-		}
-		return string(b)
-	}
+	return toolcall.MarkupPipeOpenTag(toolcall.MarkupTagToolCalls) + "\n" + strings.Join(blocks, "\n") + "\n" + toolcall.MarkupPipeCloseTag(toolcall.MarkupTagToolCalls)
 }
 
 func formatToolCallForPrompt(call map[string]any) string {
@@ -102,13 +77,40 @@ func formatToolCallForPrompt(call map[string]any) string {
 	}
 
 	parameters := formatToolCallParametersForPrompt(argsRaw)
+	escapedName := escapeXMLAttribute(name)
 	if parameters == "" {
-		return `  ` + promptDSMLInvokeOpen + ` name="` + escapeXMLAttribute(name) + `">` + promptDSMLInvokeClose
+		return "  " + toolcall.MarkupPipeInvokeOpen(escapedName) + toolcall.MarkupPipeCloseTag(toolcall.MarkupTagInvoke)
 	}
 
-	return "  " + promptDSMLInvokeOpen + " name=\"" + escapeXMLAttribute(name) + "\">\n" +
+	return "  " + toolcall.MarkupPipeInvokeOpen(escapedName) + "\n" +
 		parameters + "\n" +
-		"  " + promptDSMLInvokeClose
+		"  " + toolcall.MarkupPipeCloseTag(toolcall.MarkupTagInvoke)
+}
+
+// StringifyToolCallArguments normalizes tool arguments into a compact string
+// while preserving raw concatenated payloads when they already look like model
+// output rather than a single JSON object.
+func StringifyToolCallArguments(v any) string {
+	switch x := v.(type) {
+	case nil:
+		return "{}"
+	case string:
+		s := strings.TrimSpace(x)
+		if s == "" {
+			return "{}"
+		}
+		s = normalizeToolArgumentString(s)
+		if s == "" {
+			return "{}"
+		}
+		return s
+	default:
+		b, err := json.Marshal(x)
+		if err != nil || len(b) == 0 {
+			return "{}"
+		}
+		return string(b)
+	}
 }
 
 func formatToolCallParametersForPrompt(raw any) string {
@@ -122,7 +124,7 @@ func formatToolCallParametersForPrompt(raw any) string {
 	if strings.TrimSpace(fallback) == "" {
 		return ""
 	}
-	return "    " + promptDSMLParameterOpen + " name=\"content\">" + renderPromptXMLText(fallback) + promptDSMLParameterClose
+	return "    " + markupParameterOpen("content") + renderPromptXMLText(fallback) + markupParameterClose()
 }
 
 func renderPromptToolParameters(value any, indent string) (string, bool) {
@@ -158,9 +160,9 @@ func renderPromptToolParameters(value any, indent string) (string, bool) {
 		}
 		return strings.Join(lines, "\n"), true
 	case string:
-		return indent + promptDSMLParameterOpen + ` name="content">` + renderPromptXMLText(v) + promptDSMLParameterClose, true
+		return indent + markupParameterOpen("content") + renderPromptXMLText(v) + markupParameterClose(), true
 	default:
-		return indent + promptDSMLParameterOpen + ` name="value">` + renderPromptXMLText(fmt.Sprint(v)) + promptDSMLParameterClose, true
+		return indent + markupParameterOpen("value") + renderPromptXMLText(fmt.Sprint(v)) + markupParameterClose(), true
 	}
 }
 
@@ -171,29 +173,29 @@ func renderPromptParameterNode(name string, value any, indent string) (string, b
 	}
 	switch v := value.(type) {
 	case nil:
-		return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + `">` + promptDSMLParameterClose, true
+		return indent + markupParameterOpen(trimmedName) + markupParameterClose(), true
 	case map[string]any:
 		body, ok := renderPromptToolXMLBody(v, indent+"  ")
 		if !ok {
 			return "", false
 		}
 		if strings.TrimSpace(body) == "" {
-			return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + `">` + promptDSMLParameterClose, true
+			return indent + markupParameterOpen(trimmedName) + markupParameterClose(), true
 		}
-		return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + promptDSMLParameterClose, true
+		return indent + markupParameterOpen(trimmedName) + "\n" + body + "\n" + indent + markupParameterClose(), true
 	case []any:
 		body, ok := renderPromptToolXMLArray(v, indent+"  ")
 		if !ok {
 			return "", false
 		}
 		if strings.TrimSpace(body) == "" {
-			return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + `">` + promptDSMLParameterClose, true
+			return indent + markupParameterOpen(trimmedName) + markupParameterClose(), true
 		}
-		return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + "\">\n" + body + "\n" + indent + promptDSMLParameterClose, true
+		return indent + markupParameterOpen(trimmedName) + "\n" + body + "\n" + indent + markupParameterClose(), true
 	case string:
-		return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(v) + promptDSMLParameterClose, true
+		return indent + markupParameterOpen(trimmedName) + renderPromptXMLText(v) + markupParameterClose(), true
 	default:
-		return indent + promptDSMLParameterOpen + ` name="` + escapeXMLAttribute(trimmedName) + `">` + renderPromptXMLText(fmt.Sprint(v)) + promptDSMLParameterClose, true
+		return indent + markupParameterOpen(trimmedName) + renderPromptXMLText(fmt.Sprint(v)) + markupParameterClose(), true
 	}
 }
 
@@ -310,16 +312,10 @@ func renderPromptToolXMLNode(name string, value any, indent string) (string, boo
 	}
 }
 
-// renderPromptXMLText emits CDATA for every string so prompt-visible tool
+// renderPromptXMLText emits [[...]] for every string so prompt-visible tool
 // history stays uniform and does not drift back toward ad-hoc escaping.
 func renderPromptXMLText(text string) string {
-	if text == "" {
-		return ""
-	}
-	if strings.Contains(text, "]]>") {
-		return "<![CDATA[" + strings.ReplaceAll(text, "]]>", "]]]]><![CDATA[>") + "]]>"
-	}
-	return "<![CDATA[" + text + "]]>"
+	return toolcall.MarkupWrapRaw(text)
 }
 
 func isValidPromptXMLName(name string) bool {

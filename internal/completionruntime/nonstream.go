@@ -7,7 +7,9 @@ import (
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	"ds2api/internal/accounthealth"
 	"ds2api/internal/assistantturn"
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
@@ -55,15 +57,17 @@ func StartCompletion(ctx context.Context, ds DeepSeekCaller, a *auth.RequestAuth
 			return result, outErr
 		}
 		raw, inspected := inspectPossibleAccountFailure(result.Response)
-		if !inspected || !a.RecordAccountFailure(raw) {
+		restriction, _ := accounthealth.Classify(raw, time.Now())
+		if !inspected || restriction == "" {
 			return result, nil
 		}
-		if !a.SwitchAccount(ctx) {
-			// JSON business errors can arrive with HTTP 200, but are not SSE.
-			if result.Response.StatusCode == http.StatusOK {
-				result.Response.StatusCode = http.StatusTooManyRequests
+		a.RecordAccountFailure(raw)
+		if !canMoveRefs(result.Request, opts.CurrentInputFile != nil) || !a.SwitchAccount(ctx) {
+			if closeErr := result.Response.Body.Close(); closeErr != nil {
+				config.Logger.Warn("[completion_runtime] response body close failed", "error", closeErr)
 			}
-			return result, nil
+			result.Response = nil
+			return result, accountRestrictedOutputError()
 		}
 		if closeErr := result.Response.Body.Close(); closeErr != nil {
 			config.Logger.Warn("[completion_runtime] response body close failed", "error", closeErr)
@@ -106,10 +110,16 @@ func startCompletionAttempt(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 	}
 	sessionID, err := ds.CreateSession(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{Request: stdReq}, accountRestrictedOutputError()
+		}
 		return StartResult{Request: stdReq}, authOutputError(a)
 	}
 	pow, err := ds.GetPow(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{SessionID: sessionID, Request: stdReq}, accountRestrictedOutputError()
+		}
 		return StartResult{SessionID: sessionID, Request: stdReq}, &assistantturn.OutputError{Status: http.StatusUnauthorized, Message: "Failed to get PoW (invalid token or unknown error).", Code: "error"}
 	}
 	payload := stdReq.CompletionPayload(sessionID)
@@ -160,7 +170,7 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 	for {
 		turn, outErr := collectAttempt(currentResp, stdReq, usagePrompt, opts)
 		if outErr != nil {
-			if canRetryOnAlternateAccount(ctx, a, outErr, opts.RetryEnabled, &accountSwitchAttempted) {
+			if canRetryOnAlternateAccount(ctx, a, stdReq, opts.CurrentInputFile != nil, outErr, opts.RetryEnabled, &accountSwitchAttempted) {
 				switched, switchErr := startStandardCompletionOnAlternateAccount(ctx, ds, a, stdReq, opts, maxAttempts)
 				if switchErr != nil {
 					return NonStreamResult{SessionID: sessionID, Payload: payload, Attempts: attempts}, switchErr
@@ -200,7 +210,7 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 			retryMax = shared.EmptyOutputRetryMaxAttempts()
 		}
 		if !opts.RetryEnabled || !assistantturn.ShouldRetryEmptyOutput(turn, attempts, retryMax) {
-			if canRetryOnAlternateAccount(ctx, a, turn.Error, opts.RetryEnabled, &accountSwitchAttempted) {
+			if canRetryOnAlternateAccount(ctx, a, stdReq, opts.CurrentInputFile != nil, turn.Error, opts.RetryEnabled, &accountSwitchAttempted) {
 				switched, switchErr := startStandardCompletionOnAlternateAccount(ctx, ds, a, stdReq, opts, maxAttempts)
 				if switchErr != nil {
 					return NonStreamResult{SessionID: sessionID, Payload: payload, Turn: turn, Attempts: attempts}, switchErr
@@ -225,6 +235,9 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 		config.Logger.Info("[completion_runtime_empty_retry] attempting synthetic retry", "surface", stdReq.Surface, "stream", false, "retry_attempt", attempts, "parent_message_id", turn.ResponseMessageID)
 		retryPow, powErr := ds.GetPow(ctx, a, maxAttempts)
 		if powErr != nil {
+			if dsclient.IsAccountRestrictedError(powErr) {
+				return NonStreamResult{SessionID: sessionID, Payload: payload, Turn: turn, Attempts: attempts}, accountRestrictedOutputError()
+			}
 			config.Logger.Warn("[completion_runtime_empty_retry] retry PoW fetch failed, falling back to original PoW", "surface", stdReq.Surface, "retry_attempt", attempts, "error", powErr)
 			retryPow = pow
 		}
@@ -238,18 +251,35 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 	}
 }
 
-func canRetryOnAlternateAccount(ctx context.Context, a *auth.RequestAuth, outErr *assistantturn.OutputError, retryEnabled bool, attempted *bool) bool {
+func canRetryOnAlternateAccount(ctx context.Context, a *auth.RequestAuth, req promptcompat.StandardRequest, canReupload bool, outErr *assistantturn.OutputError, retryEnabled bool, attempted *bool) bool {
 	if outErr == nil || outErr.Status != http.StatusTooManyRequests {
 		return false
 	}
 	if !retryEnabled || attempted == nil || *attempted {
 		return false
 	}
-	if a == nil || !a.UseConfigToken {
+	if a == nil || !a.UseConfigToken || !canMoveRefs(req, canReupload) {
 		return false
 	}
 	*attempted = true
 	return a.SwitchAccount(ctx)
+}
+
+func canMoveRefs(req promptcompat.StandardRequest, canReupload bool) bool {
+	for _, id := range req.RefFileIDs {
+		id = strings.TrimSpace(id)
+		if id == "" {
+			continue
+		}
+		if !req.CurrentInputFileApplied || !canReupload || (id != req.CurrentInputFileID && id != req.CurrentToolsFileID) {
+			return false
+		}
+	}
+	return true
+}
+
+func accountRestrictedOutputError() *assistantturn.OutputError {
+	return &assistantturn.OutputError{Status: http.StatusServiceUnavailable, Message: "The DeepSeek account is restricted; check its status with DeepSeek.", Code: "error"}
 }
 
 func startStandardCompletionOnAlternateAccount(ctx context.Context, ds DeepSeekCaller, a *auth.RequestAuth, stdReq promptcompat.StandardRequest, opts Options, maxAttempts int) (StartResult, *assistantturn.OutputError) {
@@ -260,10 +290,16 @@ func startStandardCompletionOnAlternateAccount(ctx context.Context, ds DeepSeekC
 	}
 	sessionID, err := ds.CreateSession(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{}, accountRestrictedOutputError()
+		}
 		return StartResult{}, authOutputError(a)
 	}
 	pow, err := ds.GetPow(ctx, a, maxAttempts)
 	if err != nil {
+		if dsclient.IsAccountRestrictedError(err) {
+			return StartResult{SessionID: sessionID}, accountRestrictedOutputError()
+		}
 		return StartResult{SessionID: sessionID}, &assistantturn.OutputError{Status: http.StatusUnauthorized, Message: "Failed to get PoW (invalid token or unknown error).", Code: "error"}
 	}
 	payload := stdReq.CompletionPayload(sessionID)

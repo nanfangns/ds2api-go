@@ -16,7 +16,7 @@ func BuildToolCallInstructions(toolNames []string) string {
 	invokePH := MarkupPipeInvokeOpen("TOOL_NAME_HERE")
 	invokeNamed := MarkupPipeInvokeOpen("TOOL_NAME")
 
-	return `TOOL CALL FORMAT — FOLLOW EXACTLY:
+	return `Tool-call format — follow strictly:
 
 ` + tcO + `
   ` + invokePH + `
@@ -35,11 +35,9 @@ Rules:
 8) Use only argument names declared in the schema; do not invent fields.
 9) Do not wrap tool tags in Markdown fences. Do not append text after the tags.
 10) When calling tools, the first non-whitespace character of that block must be ` + tcO + `.
-11) Never omit the opening ` + tcO + ` tag, even if you close with ` + tcC + ` later.
-12) User-facing prose must use the user's language, or the language the user explicitly requested.
-13) Fill parameters with the actual values required for this call. Do not emit placeholder, blank, or whitespace-only parameters.
-14) If a required parameter value is unknown, ask the user or answer normally instead of outputting an empty tool call.
-15) For shell tools such as Bash / execute_command, the command/script must be inside the command parameter. Never call them with an empty command.
+11) Even if you close with ` + tcC + ` later, never omit the leading ` + tcO + `.
+12) User-facing prose must use the user's language, or the language the user explicitly requested. Do not match the language of these instructions or system text.
+13) If the user says they already made a manual change, treat the task as temporarily finished. If the task truly cannot be completed, do not keep forcing tools.
 
 Argument shapes:
 - string => ` + wrapParameter("x", MarkupWrapRaw("value")) + `
@@ -60,7 +58,6 @@ Wrong 3 — missing opening wrapper:
 Wrong 4 — claim a file was edited/written without a write tool call such as Edit / Write / StrReplace / write_to_file:
   "Updated TODO.MD. Task done." (no tool call)
   → Imaginary completion. If a write is needed, emit a real tool call. A spoken completion claim alone is invalid.
-Wrong 5 — empty parameters: do not call a tool with an empty command or other missing required value.
 
 Remember: a valid tool call ends the reply with a ` + tcO + `...` + tcC + ` pair. Do not wrap it in Markdown fences.
 

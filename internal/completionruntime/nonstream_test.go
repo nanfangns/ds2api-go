@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"ds2api/internal/account"
+	"ds2api/internal/assistantturn"
 	"ds2api/internal/auth"
 	"ds2api/internal/config"
 	dsclient "ds2api/internal/deepseek/client"
@@ -66,7 +67,7 @@ func TestExecuteNonStreamWithRetryBuildsCanonicalTurn(t *testing.T) {
 	)}}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test",
-		ResponseModel:   "deepseek-v4-flash",
+		ResponseModel:   "deepseek-flash",
 		PromptTokenText: "prompt",
 		FinalPrompt:     "final prompt",
 		ToolNames:       []string{"Write"},
@@ -132,7 +133,7 @@ func TestExecuteNonStreamWithRetrySwitchesManagedAccountBeforeFinal429(t *testin
 	}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test",
-		ResponseModel:   "deepseek-v4-flash",
+		ResponseModel:   "deepseek-flash",
 		PromptTokenText: "prompt",
 		FinalPrompt:     "final prompt",
 		Thinking:        true,
@@ -195,9 +196,9 @@ func TestExecuteNonStreamWithRetryReuploadsCurrentInputFileAfterAccountSwitch(t 
 	}
 	stdReq := promptcompat.StandardRequest{
 		Surface:        "test",
-		RequestedModel: "deepseek-v4-flash",
-		ResolvedModel:  "deepseek-v4-flash",
-		ResponseModel:  "deepseek-v4-flash",
+		RequestedModel: "deepseek-flash",
+		ResolvedModel:  "deepseek-flash",
+		ResponseModel:  "deepseek-flash",
 		Messages: []any{
 			map[string]any{"role": "user", "content": "large current input"},
 		},
@@ -232,7 +233,7 @@ func TestExecuteNonStreamWithRetryUsesParentMessageForEmptyRetry(t *testing.T) {
 	}}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test",
-		ResponseModel:   "deepseek-v4-flash",
+		ResponseModel:   "deepseek-flash",
 		PromptTokenText: "prompt",
 		FinalPrompt:     "final prompt",
 	}
@@ -262,7 +263,7 @@ func TestExecuteNonStreamWithRetryConvertsReferenceMarkers(t *testing.T) {
 	)}}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test",
-		ResponseModel:   "deepseek-v4-flash-search",
+		ResponseModel:   "deepseek-flash-search",
 		PromptTokenText: "prompt",
 		FinalPrompt:     "final prompt",
 		Search:          true,
@@ -282,9 +283,9 @@ func TestStartCompletionAppliesCurrentInputFileGlobally(t *testing.T) {
 	ds := &fakeDeepSeekCaller{responses: []*http.Response{sseHTTPResponse(http.StatusOK, `data: {"p":"response/content","v":"ok"}`)}}
 	stdReq := promptcompat.StandardRequest{
 		Surface:         "test_adapter",
-		RequestedModel:  "deepseek-v4-flash",
-		ResolvedModel:   "deepseek-v4-flash",
-		ResponseModel:   "deepseek-v4-flash",
+		RequestedModel:  "deepseek-flash",
+		ResolvedModel:   "deepseek-flash",
+		ResponseModel:   "deepseek-flash",
 		PromptTokenText: "first user turn",
 		FinalPrompt:     "first user turn",
 		Messages: []any{
@@ -301,8 +302,8 @@ func TestStartCompletionAppliesCurrentInputFileGlobally(t *testing.T) {
 	if len(ds.uploads) != 1 {
 		t.Fatalf("expected current input upload, got %d", len(ds.uploads))
 	}
-	if got := ds.uploads[0].Filename; got != "DS2API_HISTORY.txt" {
-		t.Fatalf("upload filename=%q want DS2API_HISTORY.txt", got)
+	if got := ds.uploads[0].Filename; !strings.HasSuffix(got, ".txt") || len(got) != 28 {
+		t.Fatalf("upload filename=%q want randomized filename", got)
 	}
 	if len(ds.payloads) != 1 {
 		t.Fatalf("expected one completion payload, got %d", len(ds.payloads))
@@ -312,10 +313,10 @@ func TestStartCompletionAppliesCurrentInputFileGlobally(t *testing.T) {
 		t.Fatalf("expected uploaded file id in ref_file_ids, got %#v", ds.payloads[0]["ref_file_ids"])
 	}
 	prompt, _ := ds.payloads[0]["prompt"].(string)
-	if !strings.Contains(prompt, "Continue from the latest state in the attached DS2API_HISTORY.txt context.") {
+	if !strings.Contains(prompt, "Using the prior conversation already provided, respond directly to the user's latest request.") {
 		t.Fatalf("expected continuation prompt, got %q", prompt)
 	}
-	if !start.Request.CurrentInputFileApplied || !strings.Contains(start.Request.PromptTokenText, "# DS2API_HISTORY.txt") {
+	if !start.Request.CurrentInputFileApplied || !strings.Contains(start.Request.PromptTokenText, "first user turn") {
 		t.Fatalf("expected prepared request to carry current input file state, got %#v", start.Request)
 	}
 }
@@ -363,5 +364,57 @@ func TestStartCompletionQuarantinesMutedAccountAndRetries(t *testing.T) {
 	}
 	if _, ok := resolver.Pool.Acquire("first@test.com", nil); ok {
 		t.Fatal("muted account was not quarantined")
+	}
+}
+
+func TestStartCompletionDoesNotSwitchWithExternalFile(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["managed-key"],"accounts":[{"email":"first@test.com","password":"pwd"},{"email":"second@test.com","password":"pwd"}]}`)
+	store := config.LoadStore()
+	resolver := auth.NewResolver(store, account.NewPool(store), func(_ context.Context, acc config.Account) (string, error) { return "token-" + acc.Identifier(), nil })
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer managed-key")
+	a, err := resolver.Determine(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Release(a)
+	muted := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":{"biz_code":14,"biz_msg":"user is muted"}}`))}
+	ds := &fakeDeepSeekCaller{responses: []*http.Response{muted}}
+	result, outErr := StartCompletion(context.Background(), ds, a, promptcompat.StandardRequest{RefFileIDs: []string{"external-file"}}, Options{})
+	if outErr == nil || outErr.Status != http.StatusServiceUnavailable || result.Response != nil {
+		t.Fatalf("expected a clear restriction error, got result=%#v err=%#v", result, outErr)
+	}
+	if a.AccountID != "first@test.com" || len(ds.completionAccounts) != 1 {
+		t.Fatalf("must not reuse an external file across accounts: account=%s calls=%v", a.AccountID, ds.completionAccounts)
+	}
+}
+
+func TestRetryDoesNotSwitchWithExternalFile(t *testing.T) {
+	t.Setenv("DS2API_CONFIG_JSON", `{"keys":["managed-key"],"accounts":[{"email":"first@test.com","password":"pwd"},{"email":"second@test.com","password":"pwd"}]}`)
+	store := config.LoadStore()
+	resolver := auth.NewResolver(store, account.NewPool(store), func(_ context.Context, acc config.Account) (string, error) { return "token-" + acc.Identifier(), nil })
+	req, _ := http.NewRequest(http.MethodPost, "/", nil)
+	req.Header.Set("Authorization", "Bearer managed-key")
+	a, err := resolver.Determine(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resolver.Release(a)
+	attempted := false
+	stdReq := promptcompat.StandardRequest{CurrentInputFileID: "generated", RefFileIDs: []string{"generated", "external"}}
+	if canRetryOnAlternateAccount(context.Background(), a, stdReq, true, &assistantturn.OutputError{Status: http.StatusTooManyRequests}, true, &attempted) {
+		t.Fatal("retry incorrectly switched accounts with an external file")
+	}
+	if attempted || a.AccountID != "first@test.com" {
+		t.Fatalf("account changed while external file was attached: %s", a.AccountID)
+	}
+}
+
+func TestDirectTokenRestrictionReturnsClearError(t *testing.T) {
+	muted := &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(strings.NewReader(`{"data":{"biz_code":14,"biz_msg":"user is muted"}}`))}
+	ds := &fakeDeepSeekCaller{responses: []*http.Response{muted}}
+	result, outErr := StartCompletion(context.Background(), ds, &auth.RequestAuth{DeepSeekToken: "direct"}, promptcompat.StandardRequest{}, Options{})
+	if outErr == nil || outErr.Status != http.StatusServiceUnavailable || result.Response != nil || len(ds.payloads) != 1 {
+		t.Fatalf("expected one clear restriction error: result=%#v err=%#v calls=%d", result, outErr, len(ds.payloads))
 	}
 }

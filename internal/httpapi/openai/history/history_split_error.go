@@ -8,6 +8,8 @@ import (
 
 func MapError(err error) (int, string) {
 	switch {
+	case dsclient.IsAccountRestrictedError(err):
+		return http.StatusServiceUnavailable, "DeepSeek reports an account restriction. Check the account's status with DeepSeek."
 	case dsclient.IsManagedUnauthorizedError(err):
 		return http.StatusUnauthorized, "Account token is invalid. Please re-login the account in admin."
 	case dsclient.IsDirectUnauthorizedError(err):

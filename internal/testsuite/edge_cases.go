@@ -47,7 +47,7 @@ func (r *Runner) caseConcurrencyThresholdLimit(ctx context.Context, cc *caseCont
 					"Authorization": "Bearer " + r.apiKey,
 				},
 				Body: map[string]any{
-					"model": "deepseek-v4-flash",
+					"model": "deepseek-flash",
 					"messages": []map[string]any{
 						{"role": "user", "content": fmt.Sprintf("并发边界测试 #%d，请输出不少于300字。", idx)},
 					},
@@ -92,7 +92,7 @@ func (r *Runner) caseStreamAbortRelease(ctx context.Context, cc *caseContext) er
 				"Authorization": "Bearer " + r.apiKey,
 			},
 			Body: map[string]any{
-				"model": "deepseek-v4-flash",
+				"model": "deepseek-flash",
 				"messages": []map[string]any{
 					{"role": "user", "content": fmt.Sprintf("中断释放测试 #%d，请流式回复", i)},
 				},
@@ -184,7 +184,7 @@ func (r *Runner) caseSSEJSONIntegrity(ctx context.Context, cc *caseContext) erro
 			"Authorization": "Bearer " + r.apiKey,
 		},
 		Body: map[string]any{
-			"model": "deepseek-v4-flash",
+			"model": "deepseek-flash",
 			"messages": []map[string]any{
 				{"role": "user", "content": "输出一句话"},
 			},
@@ -200,29 +200,6 @@ func (r *Runner) caseSSEJSONIntegrity(ctx context.Context, cc *caseContext) erro
 	badOpenAI := countMalformedSSEJSONLines(openaiResp.Body)
 	cc.assert("openai_sse_json_valid", badOpenAI == 0, fmt.Sprintf("malformed=%d", badOpenAI))
 
-	anthropicResp, err := cc.request(ctx, requestSpec{
-		Method: http.MethodPost,
-		Path:   "/anthropic/v1/messages",
-		Headers: map[string]string{
-			"Authorization":     "Bearer " + r.apiKey,
-			"anthropic-version": "2023-06-01",
-		},
-		Body: map[string]any{
-			"model": "claude-sonnet-4-5",
-			"messages": []map[string]any{
-				{"role": "user", "content": "stream json integrity"},
-			},
-			"stream": true,
-		},
-		Stream:    true,
-		Retryable: false,
-	})
-	if err != nil {
-		return err
-	}
-	cc.assert("anthropic_status_200", anthropicResp.StatusCode == http.StatusOK, fmt.Sprintf("status=%d", anthropicResp.StatusCode))
-	badAnthropic := countMalformedSSEJSONLines(anthropicResp.Body)
-	cc.assert("anthropic_sse_json_valid", badAnthropic == 0, fmt.Sprintf("malformed=%d", badAnthropic))
 	return nil
 }
 

@@ -12,6 +12,19 @@ type ConfigReader interface {
 	ModelAliases() map[string]string
 }
 
+// ValidateOpenAIModel rejects unavailable models before any inline file upload.
+func ValidateOpenAIModel(store ConfigReader, req map[string]any, missingMessage string) error {
+	model, _ := req["model"].(string)
+	model = strings.TrimSpace(model)
+	if model == "" {
+		return fmt.Errorf("%s", missingMessage)
+	}
+	if _, ok := config.ResolveModel(store, model); !ok {
+		return fmt.Errorf("model %q is not available", model)
+	}
+	return nil
+}
+
 func NormalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID string) (StandardRequest, error) {
 	model, _ := req["model"].(string)
 	messagesRaw, _ := req["messages"].([]any)
