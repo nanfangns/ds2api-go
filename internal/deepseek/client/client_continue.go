@@ -43,9 +43,15 @@ func (c *Client) wrapCompletionWithAutoContinue(ctx context.Context, a *auth.Req
 		return resp
 	}
 	config.Logger.Debug("[auto_continue] wrapping completion response", "session_id", sessionID)
+	searchEnabled, _ := payload["search_enabled"].(bool)
+	thinkingEnabled, _ := payload["thinking_enabled"].(bool)
+	initialType := "text"
+	if thinkingEnabled {
+		initialType = "thinking"
+	}
 	resp.Body = newAutoContinueBody(ctx, resp.Body, sessionID, defaultAutoContinueLimit, func(ctx context.Context, sessionID string, responseMessageID int) (*http.Response, error) {
 		return c.callContinue(ctx, a, sessionID, responseMessageID, powResp)
-	})
+	}, upstreamStreamShape{searchTrace: searchEnabled, parserType: initialType})
 	return resp
 }
 
@@ -80,7 +86,7 @@ func (c *Client) callContinue(ctx context.Context, a *auth.RequestAuth, sessionI
 
 // newAutoContinueBody returns a new ReadCloser that transparently pumps
 // continuation rounds via an io.Pipe.
-func newAutoContinueBody(ctx context.Context, initial io.ReadCloser, sessionID string, maxRounds int, openContinue continueOpenFunc) io.ReadCloser {
+func newAutoContinueBody(ctx context.Context, initial io.ReadCloser, sessionID string, maxRounds int, openContinue continueOpenFunc, shapes ...upstreamStreamShape) io.ReadCloser {
 	if initial == nil || strings.TrimSpace(sessionID) == "" || openContinue == nil {
 		return initial
 	}
@@ -88,7 +94,11 @@ func newAutoContinueBody(ctx context.Context, initial io.ReadCloser, sessionID s
 		maxRounds = defaultAutoContinueLimit
 	}
 	pr, pw := io.Pipe()
-	go pumpAutoContinue(ctx, pw, initial, continueState{sessionID: sessionID}, maxRounds, openContinue)
+	state := continueState{sessionID: sessionID}
+	if len(shapes) > 0 {
+		state.shape = shapes[0]
+	}
+	go pumpAutoContinue(ctx, pw, initial, state, maxRounds, openContinue)
 	return pr
 }
 

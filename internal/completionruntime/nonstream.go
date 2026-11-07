@@ -176,7 +176,7 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 					return NonStreamResult{SessionID: sessionID, Payload: payload, Attempts: attempts}, switchErr
 				}
 				if switched.Response != nil {
-					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after 429", "surface", stdReq.Surface, "stream", false, "account", a.AccountID)
+					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after upstream error", "surface", stdReq.Surface, "stream", false, "status", outErr.Status, "code", outErr.Code, "account", a.AccountID)
 					sessionID = switched.SessionID
 					payload = switched.Payload
 					pow = switched.Pow
@@ -216,7 +216,7 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 					return NonStreamResult{SessionID: sessionID, Payload: payload, Turn: turn, Attempts: attempts}, switchErr
 				}
 				if switched.Response != nil {
-					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after 429", "surface", stdReq.Surface, "stream", false, "account", a.AccountID)
+					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after upstream error", "surface", stdReq.Surface, "stream", false, "status", turn.Error.Status, "code", turn.Error.Code, "account", a.AccountID)
 					sessionID = switched.SessionID
 					payload = switched.Payload
 					pow = switched.Pow

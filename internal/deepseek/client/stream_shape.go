@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"ds2api/internal/config"
+	"ds2api/internal/sse"
 )
 
 // upstreamStreamShape records protocol structure only, never prompts,
@@ -18,10 +19,27 @@ type upstreamStreamShape struct {
 	textContentParts     int
 	thinkingContentParts int
 	pathlessParts        int
+	searchTrace          bool
+	parserType           string
+	parsedTextEvents     int
+	parsedThinkingEvents int
+	fragmentSequence     []string
 }
 
 func (s *upstreamStreamShape) observe(chunk map[string]any) {
 	s.events++
+	if s.searchTrace {
+		parts, _, _, nextType := sse.ParseSSEChunkForContentDetailed(chunk, true, s.parserType)
+		s.parserType = nextType
+		for _, part := range parts {
+			switch part.Type {
+			case "text":
+				s.parsedTextEvents++
+			case "thinking":
+				s.parsedThinkingEvents++
+			}
+		}
+	}
 	path, _ := chunk["p"].(string)
 	v := chunk["v"]
 	switch path {
@@ -79,7 +97,11 @@ func (s *upstreamStreamShape) observeFragments(raw any, op string) {
 			continue
 		}
 		kind, _ := fragment["type"].(string)
-		switch strings.ToUpper(strings.TrimSpace(kind)) {
+		kind = strings.ToUpper(strings.TrimSpace(kind))
+		if s.searchTrace && len(s.fragmentSequence) < 40 {
+			s.fragmentSequence = append(s.fragmentSequence, safeFragmentKind(kind)+":"+safeFragmentOperation(op))
+		}
+		switch kind {
 		case "THINK", "THINKING":
 			s.thinkingFragments++
 		case "RESPONSE":
@@ -87,6 +109,30 @@ func (s *upstreamStreamShape) observeFragments(raw any, op string) {
 		default:
 			s.otherFragments++
 		}
+	}
+}
+
+func safeFragmentKind(kind string) string {
+	switch kind {
+	case "THINK", "THINKING", "RESPONSE", "TOOL_SEARCH", "TOOL_OPEN", "TIP", "TEMPLATE_RESPONSE":
+		return kind
+	default:
+		return "OTHER"
+	}
+}
+
+func safeFragmentOperation(op string) string {
+	switch strings.ToUpper(strings.TrimSpace(op)) {
+	case "APPEND":
+		return "APPEND"
+	case "SET":
+		return "SET"
+	case "INITIAL":
+		return "INITIAL"
+	case "":
+		return "NONE"
+	default:
+		return "OTHER"
 	}
 }
 
@@ -105,4 +151,9 @@ func (s upstreamStreamShape) log(lastStatus string) {
 		"other_fragments", s.otherFragments, "fragments_without_op", s.fragmentsWithoutOp,
 		"fragment_content_parts", s.fragmentContentParts, "text_content_parts", s.textContentParts,
 		"thinking_content_parts", s.thinkingContentParts, "pathless_parts", s.pathlessParts, "status", status)
+	if s.searchTrace {
+		config.Logger.Info("[upstream_search_shape]", "fragment_sequence", strings.Join(s.fragmentSequence, ","),
+			"parsed_text_events", s.parsedTextEvents, "parsed_thinking_events", s.parsedThinkingEvents,
+			"last_parser_type", s.parserType)
+	}
 }

@@ -84,7 +84,7 @@ func ExecuteStreamWithRetry(ctx context.Context, ds DeepSeekCaller, a *auth.Requ
 					return
 				}
 				if switched.Response != nil {
-					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after 429", "surface", surface, "stream", opts.Stream, "account", a.AccountID)
+					config.Logger.Info("[completion_runtime_account_switch_retry] retrying after empty output", "surface", surface, "stream", opts.Stream, "account", a.AccountID)
 					currentResp = switched.Response
 					currentPayload = switched.Payload
 					pow = switched.Pow
