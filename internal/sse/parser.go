@@ -258,7 +258,7 @@ func appendChunkValueContent(v any, partType string, newType *string, parts *[]C
 		}
 		appendContentPart(parts, val, partType)
 	case []any:
-		pp, finished := extractContentRecursive(val, partType)
+		pp, finished := extractContentRecursive(val, partType, path == "" || path == "response")
 		*parts = append(*parts, pp...)
 		if finished {
 			return true
@@ -392,7 +392,7 @@ func isStatusPath(path string) bool {
 	return path == "response/status" || path == "status"
 }
 
-func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bool) {
+func extractContentRecursive(items []any, defaultType string, relativeStatusIsGlobal bool) ([]ContentPart, bool) {
 	parts := make([]ContentPart, 0, len(items))
 	for _, it := range items {
 		m, ok := it.(map[string]any)
@@ -405,7 +405,7 @@ func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bo
 			continue
 		}
 		if isStatusPath(itemPath) {
-			if s, ok := itemV.(string); ok && strings.EqualFold(strings.TrimSpace(s), "FINISHED") {
+			if s, ok := itemV.(string); ok && strings.EqualFold(strings.TrimSpace(s), "FINISHED") && (itemPath == "response/status" || relativeStatusIsGlobal) {
 				return parts, true
 			}
 			continue

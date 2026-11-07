@@ -23,21 +23,32 @@ type upstreamStreamShape struct {
 	parserType           string
 	parsedTextEvents     int
 	parsedThinkingEvents int
+	textEventsBeforeStop int
+	firstStopEvent       int
+	firstStopScope       string
 	fragmentSequence     []string
 }
 
 func (s *upstreamStreamShape) observe(chunk map[string]any) {
 	s.events++
 	if s.searchTrace {
-		parts, _, _, nextType := sse.ParseSSEChunkForContentDetailed(chunk, true, s.parserType)
+		parts, _, finished, nextType := sse.ParseSSEChunkForContentDetailed(chunk, true, s.parserType)
 		s.parserType = nextType
 		for _, part := range parts {
 			switch part.Type {
 			case "text":
 				s.parsedTextEvents++
+				if s.firstStopEvent == 0 {
+					s.textEventsBeforeStop++
+				}
 			case "thinking":
 				s.parsedThinkingEvents++
 			}
+		}
+		if finished && s.firstStopEvent == 0 {
+			s.firstStopEvent = s.events
+			path, _ := chunk["p"].(string)
+			s.firstStopScope = safeStopScope(path)
 		}
 	}
 	path, _ := chunk["p"].(string)
@@ -80,6 +91,19 @@ func (s *upstreamStreamShape) observe(chunk map[string]any) {
 				s.fragmentContentParts++
 			}
 		}
+	}
+}
+
+func safeStopScope(path string) string {
+	switch {
+	case path == "":
+		return "pathless"
+	case path == "response" || path == "response/status" || path == "status":
+		return "response"
+	case strings.HasPrefix(path, "response/fragments/"):
+		return "fragment"
+	default:
+		return "other"
 	}
 }
 
@@ -154,6 +178,7 @@ func (s upstreamStreamShape) log(lastStatus string) {
 	if s.searchTrace {
 		config.Logger.Info("[upstream_search_shape]", "fragment_sequence", strings.Join(s.fragmentSequence, ","),
 			"parsed_text_events", s.parsedTextEvents, "parsed_thinking_events", s.parsedThinkingEvents,
-			"last_parser_type", s.parserType)
+			"text_events_before_stop", s.textEventsBeforeStop, "first_stop_event", s.firstStopEvent,
+			"first_stop_scope", s.firstStopScope, "last_parser_type", s.parserType)
 	}
 }

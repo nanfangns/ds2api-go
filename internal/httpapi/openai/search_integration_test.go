@@ -56,6 +56,7 @@ func TestSearchResponseKeepsTextAndNonStreamingCitationLinks(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ds := &inlineUploadDSStub{completionResp: makeOpenAISSEHTTPResponse(
 				`data: {"p":"response/fragments/-1/results","v":[{"url":"https://example.com/source","cite_index":1}]}`,
+				`data: {"p":"response/fragments/-1","o":"BATCH","v":[{"p":"status","v":"FINISHED"}]}`,
 				`data: {"p":"response/content","v":"[citation:1] Answer text"}`,
 				`data: [DONE]`,
 			)}

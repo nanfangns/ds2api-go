@@ -10,6 +10,41 @@ const terminalBatchStream = "data: {\"p\":\"response/thinking_content\",\"v\":\"
 	"data: {\"p\":\"response\",\"o\":\"BATCH\",\"v\":[{\"p\":\"fragments\",\"o\":\"APPEND\",\"v\":[{\"type\":\"RESPONSE\",\"content\":\"answer\"}]},{\"p\":\"status\",\"v\":\"FINISHED\"}]}\n" +
 	"data: [DONE]\n"
 
+const searchFragmentStatusStream = "data: {\"p\":\"response/fragments\",\"v\":[{\"type\":\"TOOL_SEARCH\"}]}\n" +
+	"data: {\"p\":\"response/fragments/-1\",\"o\":\"BATCH\",\"v\":[{\"p\":\"status\",\"v\":\"FINISHED\"}]}\n" +
+	"data: {\"p\":\"response/fragments\",\"v\":[{\"type\":\"RESPONSE\"}]}\n" +
+	"data: {\"v\":\"search answer\"}\n" +
+	"data: {\"p\":\"response/status\",\"v\":\"FINISHED\"}\n" +
+	"data: [DONE]\n"
+
+func TestSearchFragmentFinishedDoesNotStopNonStreamingResponse(t *testing.T) {
+	result := CollectStream(makeHTTPResponse(searchFragmentStatusStream), true, true)
+	if result.Text != "search answer" {
+		t.Fatalf("search answer lost after fragment finished: %+v", result)
+	}
+}
+
+func TestSearchFragmentFinishedDoesNotStopStreamingResponse(t *testing.T) {
+	results, done := StartParsedLinePump(context.Background(), strings.NewReader(searchFragmentStatusStream), true, "thinking")
+	var answer strings.Builder
+	for result := range results {
+		if result.Stop {
+			break
+		}
+		for _, part := range result.Parts {
+			if part.Type == "text" {
+				answer.WriteString(part.Text)
+			}
+		}
+	}
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	if answer.String() != "search answer" {
+		t.Fatalf("search answer lost after fragment finished: %q", answer.String())
+	}
+}
+
 func TestTerminalBatchPreservesAnswerInNonStream(t *testing.T) {
 	result := CollectStream(makeHTTPResponse(terminalBatchStream), true, true)
 	if result.Thinking != "think" || result.Text != "answer" {

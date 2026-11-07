@@ -475,7 +475,7 @@ func TestExtractContentRecursiveFinishedStatus(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "status", "v": "FINISHED"},
 	}
-	parts, finished := extractContentRecursive(items, "text")
+	parts, finished := extractContentRecursive(items, "text", true)
 	if !finished {
 		t.Fatal("expected finished on status FINISHED")
 	}
@@ -488,7 +488,7 @@ func TestExtractContentRecursiveSkipsPath(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "quasi_status", "v": "data"},
 	}
-	parts, finished := extractContentRecursive(items, "text")
+	parts, finished := extractContentRecursive(items, "text", true)
 	if finished {
 		t.Fatal("expected not finished")
 	}
@@ -501,7 +501,7 @@ func TestExtractContentRecursiveContentField(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "x", "v": "val", "content": "actual content", "type": "RESPONSE"},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 1 || parts[0].Text != "actual content" || parts[0].Type != "text" {
 		t.Fatalf("unexpected parts: %#v", parts)
 	}
@@ -511,7 +511,7 @@ func TestExtractContentRecursiveContentFieldThinkType(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "x", "v": "val", "content": "think text", "type": "THINK"},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 1 || parts[0].Type != "thinking" {
 		t.Fatalf("expected thinking type for THINK content, got %#v", parts)
 	}
@@ -521,7 +521,7 @@ func TestExtractContentRecursiveThinkingPath(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "thinking_content", "v": "deep thought"},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 1 || parts[0].Type != "thinking" || parts[0].Text != "deep thought" {
 		t.Fatalf("unexpected parts for thinking path: %#v", parts)
 	}
@@ -531,7 +531,7 @@ func TestExtractContentRecursiveContentPath(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "content", "v": "text content"},
 	}
-	parts, _ := extractContentRecursive(items, "thinking")
+	parts, _ := extractContentRecursive(items, "thinking", true)
 	if len(parts) != 1 || parts[0].Type != "text" {
 		t.Fatalf("expected text type for content path, got %#v", parts)
 	}
@@ -541,7 +541,7 @@ func TestExtractContentRecursiveResponsePath(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "response", "v": "text content"},
 	}
-	parts, _ := extractContentRecursive(items, "thinking")
+	parts, _ := extractContentRecursive(items, "thinking", true)
 	if len(parts) != 1 || parts[0].Type != "text" {
 		t.Fatalf("expected text type for response path, got %#v", parts)
 	}
@@ -551,7 +551,7 @@ func TestExtractContentRecursiveFragmentsPath(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "fragments", "v": "fragment text"},
 	}
-	parts, _ := extractContentRecursive(items, "thinking")
+	parts, _ := extractContentRecursive(items, "thinking", true)
 	if len(parts) != 1 || parts[0].Type != "text" {
 		t.Fatalf("expected text type for fragments path, got %#v", parts)
 	}
@@ -568,7 +568,7 @@ func TestExtractContentRecursiveNestedArrayWithTypes(t *testing.T) {
 			},
 		},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 3 {
 		t.Fatalf("expected 3 parts, got %d: %#v", len(parts), parts)
 	}
@@ -592,7 +592,7 @@ func TestExtractContentRecursiveEmptyContentSkipped(t *testing.T) {
 			},
 		},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 0 {
 		t.Fatalf("expected no parts for empty nested content, got %#v", parts)
 	}
@@ -602,7 +602,7 @@ func TestExtractContentRecursiveFinishedString(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "content", "v": "FINISHED"},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	// "FINISHED" string value on non-status path should be skipped
 	if len(parts) != 0 {
 		t.Fatalf("expected FINISHED string to be skipped, got %#v", parts)
@@ -613,7 +613,7 @@ func TestExtractContentRecursiveNoVField(t *testing.T) {
 	items := []any{
 		map[string]any{"p": "content"},
 	}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 0 {
 		t.Fatalf("expected no parts for missing v field, got %#v", parts)
 	}
@@ -621,7 +621,7 @@ func TestExtractContentRecursiveNoVField(t *testing.T) {
 
 func TestExtractContentRecursiveNonMapItem(t *testing.T) {
 	items := []any{"just a string", 42}
-	parts, _ := extractContentRecursive(items, "text")
+	parts, _ := extractContentRecursive(items, "text", true)
 	if len(parts) != 0 {
 		t.Fatalf("expected no parts for non-map items, got %#v", parts)
 	}

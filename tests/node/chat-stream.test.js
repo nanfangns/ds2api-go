@@ -616,6 +616,16 @@ test('parseChunkForContent detects nested status FINISHED in array payload', () 
   assert.deepEqual(parsed.parts, []);
 });
 
+test('parseChunkForContent does not end the response when a search fragment finishes', () => {
+  const parsed = parseChunkForContent({
+    p: 'response/fragments/-1',
+    o: 'BATCH',
+    v: [{ p: 'status', v: 'FINISHED' }],
+  }, true, 'thinking');
+  assert.equal(parsed.finished, false);
+  assert.deepEqual(parsed.parts, []);
+});
+
 test('parseChunkForContent ignores items without v to match Go parser behavior', () => {
   const chunk = {
     p: 'response',

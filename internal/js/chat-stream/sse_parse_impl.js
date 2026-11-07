@@ -286,7 +286,7 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
   }
 
   if (Array.isArray(val)) {
-    const extracted = extractContentRecursive(val, partType, stripReferenceMarkers);
+    const extracted = extractContentRecursive(val, partType, stripReferenceMarkers, pathValue === '' || pathValue === 'response');
     if (extracted.finished) {
       return {
         parsed: true,
@@ -360,7 +360,7 @@ function parseChunkForContent(chunk, thinkingEnabled, currentType, stripReferenc
   };
 }
 
-function extractContentRecursive(items, defaultType, stripReferenceMarkers = true) {
+function extractContentRecursive(items, defaultType, stripReferenceMarkers = true, relativeStatusIsGlobal = true) {
   const parts = [];
   for (const it of items) {
     if (!it || typeof it !== 'object') {
@@ -372,7 +372,7 @@ function extractContentRecursive(items, defaultType, stripReferenceMarkers = tru
     const itemPath = asString(it.p);
     const itemV = it.v;
     if (isStatusPath(itemPath)) {
-      if (isFinishedStatus(itemV)) {
+      if (isFinishedStatus(itemV) && (itemPath === 'response/status' || relativeStatusIsGlobal)) {
         return { parts: [], finished: true };
       }
       continue;
