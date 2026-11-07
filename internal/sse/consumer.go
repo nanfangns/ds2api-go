@@ -57,16 +57,6 @@ func CollectStream(resp *http.Response, thinkingEnabled bool, closeBody bool) Co
 		if !result.Parsed {
 			return true
 		}
-		if result.Stop {
-			if result.ContentFilter {
-				contentFilter = true
-			}
-			// Keep scanning to collect late-arriving citation metadata lines
-			// that can appear after response/status=FINISHED, but stop as soon
-			// as [DONE] arrives.
-			stopped = true
-			return true
-		}
 		for _, p := range result.Parts {
 			if p.Type == "thinking" {
 				trimmed := TrimContinuationOverlap(thinking.String(), p.Text)
@@ -79,6 +69,13 @@ func CollectStream(resp *http.Response, thinkingEnabled bool, closeBody bool) Co
 		for _, p := range result.ToolDetectionThinkingParts {
 			trimmed := TrimContinuationOverlap(toolDetectionThinking.String(), p.Text)
 			toolDetectionThinking.WriteString(trimmed)
+		}
+		if result.Stop {
+			if result.ContentFilter {
+				contentFilter = true
+			}
+			// Keep scanning for late citation metadata until [DONE].
+			stopped = true
 		}
 		return true
 	})

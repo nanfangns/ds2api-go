@@ -200,7 +200,7 @@ func startParsedLinePumpWithConfig(ctx context.Context, body io.Reader, thinking
 					for _, p := range result.ToolDetectionThinkingParts {
 						toolDetectionThinkingBuffer.WriteString(p.Text)
 					}
-					if textBuffer.Len() > 0 || len(result.Parts) > 0 || toolDetectionThinkingBuffer.Len() > 0 {
+					if textBuffer.Len() > 0 || thinkingBuffer.Len() > 0 || len(result.Parts) > 0 || toolDetectionThinkingBuffer.Len() > 0 {
 						for _, p := range result.Parts {
 							if p.Type == "thinking" {
 								thinkingBuffer.WriteString(p.Text)

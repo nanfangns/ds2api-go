@@ -97,9 +97,6 @@ func ParseSSEChunkForContentDetailed(chunk map[string]any, thinkingEnabled bool,
 	updateTypeFromNestedResponse(path, v, &newType)
 	partType := resolvePartType(path, thinkingEnabled, newType)
 	finished := appendChunkValueContent(v, partType, &newType, &parts, path)
-	if finished {
-		return nil, nil, true, newType
-	}
 	var transitioned bool
 	parts, transitioned = splitThinkingParts(parts)
 	if transitioned {
@@ -109,7 +106,7 @@ func ParseSSEChunkForContentDetailed(chunk map[string]any, thinkingEnabled bool,
 	if !thinkingEnabled {
 		parts = dropThinkingParts(parts)
 	}
-	return parts, detectionThinkingParts, false, newType
+	return parts, detectionThinkingParts, finished, newType
 }
 
 func updateTypeFromExplicitPath(path string, thinkingEnabled bool, newType *string) {
@@ -144,7 +141,7 @@ func collectDirectFragments(path string, chunk map[string]any, v any, newType *s
 		return
 	}
 	op, _ := chunk["o"].(string)
-	if !strings.EqualFold(op, "APPEND") {
+	if strings.TrimSpace(op) != "" && !strings.EqualFold(op, "APPEND") {
 		return
 	}
 	frags, ok := v.([]any)
@@ -168,7 +165,9 @@ func collectDirectFragments(path string, chunk map[string]any, v any, newType *s
 			*newType = "text"
 			appendContentPart(parts, content, "text")
 		default:
-			appendContentPart(parts, content, "text")
+			if strings.EqualFold(op, "APPEND") {
+				appendContentPart(parts, content, "text")
+			}
 		}
 	}
 }
@@ -183,7 +182,11 @@ func updateTypeFromNestedResponse(path string, v any, newType *string) {
 	}
 	for _, it := range arr {
 		m, ok := it.(map[string]any)
-		if !ok || m["p"] != "fragments" || m["o"] != "APPEND" {
+		if !ok || m["p"] != "fragments" {
+			continue
+		}
+		op, _ := m["o"].(string)
+		if strings.TrimSpace(op) != "" && !strings.EqualFold(op, "APPEND") {
 			continue
 		}
 		frags, ok := m["v"].([]any)
@@ -256,10 +259,10 @@ func appendChunkValueContent(v any, partType string, newType *string, parts *[]C
 		appendContentPart(parts, val, partType)
 	case []any:
 		pp, finished := extractContentRecursive(val, partType)
+		*parts = append(*parts, pp...)
 		if finished {
 			return true
 		}
-		*parts = append(*parts, pp...)
 	case map[string]any:
 		if appendObjectContentByPath(path, val, partType, parts) {
 			return false
@@ -403,7 +406,7 @@ func extractContentRecursive(items []any, defaultType string) ([]ContentPart, bo
 		}
 		if isStatusPath(itemPath) {
 			if s, ok := itemV.(string); ok && strings.EqualFold(strings.TrimSpace(s), "FINISHED") {
-				return nil, true
+				return parts, true
 			}
 			continue
 		}

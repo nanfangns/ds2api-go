@@ -211,14 +211,7 @@ func ValidateTurn(turn Turn, policy promptcompat.ToolChoicePolicy) *OutputError 
 }
 
 func UpstreamEmptyOutputDetail(contentFilter bool, text, thinking string) (int, string, string) {
-	_ = text
-	if contentFilter {
-		return http.StatusBadRequest, "Upstream content filtered the response and returned no output.", "content_filter"
-	}
-	if strings.TrimSpace(thinking) != "" {
-		return http.StatusTooManyRequests, "Upstream account hit a rate limit and returned reasoning without visible output.", "upstream_empty_output"
-	}
-	return http.StatusServiceUnavailable, "Upstream service is unavailable and returned no output.", "upstream_unavailable"
+	return shared.UpstreamEmptyOutputDetail(contentFilter, text, thinking)
 }
 
 // ShouldRetryEmptyOutput returns true when the turn produced no visible text

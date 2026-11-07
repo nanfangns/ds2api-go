@@ -123,7 +123,7 @@ func TestHandleNonStreamSingleAttemptReturnsContentFilterErrorWhenUpstreamFilter
 	}
 }
 
-func TestHandleNonStreamSingleAttemptReturns429WhenUpstreamHasOnlyThinking(t *testing.T) {
+func TestHandleNonStreamSingleAttemptReturns502WhenUpstreamHasOnlyThinking(t *testing.T) {
 	h := &Handler{}
 	resp := makeSSEHTTPResponse(
 		`data: {"p":"response/thinking_content","v":"Only thinking"}`,
@@ -132,8 +132,8 @@ func TestHandleNonStreamSingleAttemptReturns429WhenUpstreamHasOnlyThinking(t *te
 	rec := httptest.NewRecorder()
 
 	h.handleNonStream(rec, resp, "cid-thinking-only", "deepseek-v4-pro", "prompt", 0, true, false, nil, nil, nil)
-	if rec.Code != http.StatusTooManyRequests {
-		t.Fatalf("expected status 429 for thinking-only upstream output, got %d body=%s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("expected status 502 for thinking-only upstream output, got %d body=%s", rec.Code, rec.Body.String())
 	}
 	out := decodeJSONBody(t, rec.Body.String())
 	errObj, _ := out["error"].(map[string]any)

@@ -226,7 +226,7 @@ For business endpoints (`/v1/*`), DS2API supports two modes:
 | **Direct token** | If the token is not in `config.keys`, DS2API treats it as a DeepSeek token directly |
 
 Optional header `X-Ds2-Target-Account`: Pin a specific managed account (value is email or mobile).
-When no target account is pinned, if a completion would end as `429 upstream_empty_output` after the same-account empty-output retry, managed-account mode switches to the next available account, creates a fresh session, and retries the original payload once.
+When no target account is pinned, if a completion would end as `502 upstream_empty_output` after the same-account empty-output retry, managed-account mode switches to the next available account, creates a fresh session, and retries the original payload once.
 
 ## Concurrency Model
 
@@ -239,7 +239,7 @@ Queue limit = DS2API_ACCOUNT_MAX_QUEUE (default = recommended concurrency)
 
 - When inflight slots are full, requests enter a waiting queue — **no immediate 429**
 - 429 is returned only when total load exceeds inflight + queue capacity; current responses do not include `Retry-After`
-- Completion empty-output 429s first get the same-account compensation retry; managed-account mode also tries one alternate-account fresh retry before returning the final 429
+- Completion empty outputs first get the same-account compensation retry; managed-account mode also tries one alternate-account fresh retry before returning the final error
 - `GET /admin/queue/status` returns real-time concurrency state
 
 ## Tool Call Adaptation

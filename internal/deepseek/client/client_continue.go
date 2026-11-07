@@ -25,6 +25,7 @@ type continueState struct {
 	responseMessageID int
 	lastStatus        string
 	finished          bool
+	shape             upstreamStreamShape
 }
 
 // wrapCompletionWithAutoContinue wraps the completion response body so that
@@ -96,6 +97,7 @@ func newAutoContinueBody(ctx context.Context, initial io.ReadCloser, sessionID s
 // and if so opens a new continue stream and splices it onto the pipe writer.
 func pumpAutoContinue(ctx context.Context, pw *io.PipeWriter, initial io.ReadCloser, state continueState, maxRounds int, openContinue continueOpenFunc) {
 	defer func() { _ = pw.Close() }()
+	defer func() { state.shape.log(state.lastStatus) }()
 	current := initial
 	rounds := 0
 	for {
@@ -189,6 +191,7 @@ func (s *continueState) observe(data string) {
 	if err := json.Unmarshal([]byte(data), &chunk); err != nil {
 		return
 	}
+	s.shape.observe(chunk)
 	// Top-level response_message_id
 	if id := intFrom(chunk["response_message_id"]); id > 0 {
 		s.responseMessageID = id

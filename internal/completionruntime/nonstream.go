@@ -252,7 +252,7 @@ func ExecuteNonStreamStartedWithRetry(ctx context.Context, ds DeepSeekCaller, a 
 }
 
 func canRetryOnAlternateAccount(ctx context.Context, a *auth.RequestAuth, req promptcompat.StandardRequest, canReupload bool, outErr *assistantturn.OutputError, retryEnabled bool, attempted *bool) bool {
-	if outErr == nil || outErr.Status != http.StatusTooManyRequests {
+	if outErr == nil || (outErr.Status != http.StatusTooManyRequests && outErr.Code != "upstream_empty_output") {
 		return false
 	}
 	if !retryEnabled || attempted == nil || *attempted {
