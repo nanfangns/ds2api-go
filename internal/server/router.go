@@ -92,6 +92,29 @@ func NewApp() (*App, error) {
 	r.Head("/healthz", healthzHandler)
 	r.Get("/readyz", readyzHandler)
 	r.Head("/readyz", readyzHandler)
+	r.Get("/__stream_probe", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_, _ = w.Write([]byte(`<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>Stream probe</title></head><body>
+<label>测试密钥 <input id="key" type="password" autocomplete="off"></label>
+<label>消息 <input id="message" value="你好，请用一句话介绍你自己。"></label>
+<label>启用思考 <input id="thinking" type="checkbox" checked></label>
+<button id="send">发送测试</button><pre id="result"></pre>
+<script>
+document.getElementById('send').addEventListener('click', async function() {
+  const output = document.getElementById('result'); output.textContent = '请求中';
+  try {
+    const res = await fetch('/v1/chat/completions', {method:'POST', headers:{'Authorization':'Bearer '+document.getElementById('key').value,'Content-Type':'application/json'}, body:JSON.stringify({model:'deepseek-flash', messages:[{role:'user',content:document.getElementById('message').value}], thinking:document.getElementById('thinking').checked, stream:true})});
+    const raw = await res.text(); let answer = '', reasoningLength = 0, errors = [], finish = [];
+    for (const line of raw.split('\n')) {
+      if (!line.startsWith('data:')) continue;
+      const part = line.slice(5).trim(); if (!part || part === '[DONE]') continue;
+      try { const event = JSON.parse(part); if (event.error) errors.push({status:event.status_code, code:event.error.code, message:event.error.message}); for (const item of (event.choices || [])) { const delta=item.delta || {}; answer+=delta.content || ''; reasoningLength+=(delta.reasoning_content || '').length; if (item.finish_reason) finish.push(item.finish_reason); } } catch (_) {}
+    }
+    output.textContent = JSON.stringify({http:res.status, reasoningLength, answer, finish, errors}, null, 2);
+  } catch (error) { output.textContent = '请求失败: ' + error.message; }
+});
+</script></body></html>`))
+	})
 	r.Get("/v1/models", modelsHandler.ListModels)
 	r.Get("/v1/models/{model_id}", modelsHandler.GetModel)
 	r.Post("/v1/chat/completions", chatHandler.ChatCompletions)
