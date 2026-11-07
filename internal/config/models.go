@@ -18,17 +18,21 @@ type ModelAliasReader interface {
 
 var DeepSeekModels = []ModelInfo{
 	{ID: "deepseek-flash", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Multimodal: true, Permission: []any{}},
+	{ID: "deepseek-flash-search", Object: "model", Created: 1677610602, OwnedBy: "deepseek", Multimodal: true, Permission: []any{}},
 }
 
 func GetModelConfig(model string) (thinking bool, search bool, ok bool) {
-	if strings.EqualFold(strings.TrimSpace(model), "deepseek-flash") {
+	switch strings.ToLower(strings.TrimSpace(model)) {
+	case "deepseek-flash":
 		return true, false, true
+	case "deepseek-flash-search":
+		return true, true, true
 	}
 	return false, false, false
 }
 
 func GetModelType(model string) (string, bool) {
-	if strings.EqualFold(strings.TrimSpace(model), "deepseek-flash") {
+	if IsSupportedDeepSeekModel(model) {
 		return "default", true
 	}
 	return "", false
@@ -44,8 +48,9 @@ func IsNoThinkingModel(string) bool { return false }
 func DefaultModelAliases() map[string]string { return map[string]string{} }
 
 func ResolveModel(_ ModelAliasReader, requested string) (string, bool) {
-	if strings.EqualFold(strings.TrimSpace(requested), "deepseek-flash") {
-		return "deepseek-flash", true
+	model := strings.ToLower(strings.TrimSpace(requested))
+	if IsSupportedDeepSeekModel(model) {
+		return model, true
 	}
 	return "", false
 }

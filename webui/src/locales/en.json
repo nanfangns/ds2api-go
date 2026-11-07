@@ -227,7 +227,7 @@
         "models": {
             "flash": "v4 Flash (thinking on by default)",
             "pro": "v4 Pro (thinking on by default)",
-            "flashSearch": "v4 Flash (with search)",
+            "flashSearch": "Flash (web search)",
             "proSearch": "v4 Pro (with search)",
             "vision": "v4 Vision (thinking on by default)",
             "generic": "Compatible model",

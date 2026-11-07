@@ -161,7 +161,7 @@ OpenAI `/v1/*` paths are canonical. For clients configured with the bare DS2API 
 
 ### `GET /v1/models`
 
-No authentication is required. Only `deepseek-flash` is listed or accepted as a model ID. Old models, aliases and `-nothinking` IDs are no longer supported. Thinking is enabled by default; set `"thinking": false` in a request to disable it.
+No authentication is required. The list contains `deepseek-flash` and `deepseek-flash-search`; both use the same upstream model, with search enabled by default for the latter. Old models, other aliases and `-nothinking` IDs are no longer supported. Thinking is enabled by default; set `"thinking": false` in a request to disable it.
 
 ### `POST /v1/chat/completions`
 
@@ -178,9 +178,10 @@ Content-Type: application/json
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | Use `deepseek-flash` |
+| `model` | string | ✅ | `deepseek-flash` or `deepseek-flash-search` |
 | `messages` | array | ✅ | OpenAI-style messages |
 | `stream` | boolean | ❌ | Default `false` |
+| `search_enabled` | boolean | ❌ | Override the model's search default; also accepted in `extra_body` |
 | `tools` | array | ❌ | Function calling schema |
 | `temperature`, etc. | any | ❌ | Accepted but final behavior depends on upstream |
 
@@ -282,7 +283,7 @@ Additional notes:
 
 ### `GET /v1/models/{id}`
 
-No auth required. Alias values are accepted as path params (for example `gpt-4o`), and the returned object is the mapped DeepSeek model.
+No auth required. Either of the two model IDs above can be queried.
 
 ### `POST /v1/responses`
 
@@ -290,11 +291,12 @@ OpenAI Responses-style endpoint, accepting either `input` or `messages`.
 
 | Field | Type | Required | Notes |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | Use `deepseek-flash` |
+| `model` | string | ✅ | `deepseek-flash` or `deepseek-flash-search` |
 | `input` | string/array/object | ❌ | One of `input` or `messages` is required |
 | `messages` | array | ❌ | One of `input` or `messages` is required |
 | `instructions` | string | ❌ | Prepended as a system message |
 | `stream` | boolean | ❌ | Default `false` |
+| `search_enabled` | boolean | ❌ | Override the model's search default; also accepted in `extra_body` |
 | `tools` | array | ❌ | Same tool detection/translation policy as chat |
 | `tool_choice` | string/object | ❌ | Supports `auto`/`none`/`required` and forced function selection (`{"type":"function","name":"..."}`) |
 

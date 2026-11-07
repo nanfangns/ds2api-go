@@ -83,8 +83,11 @@ OpenAI Chat / Responses 请求经 Go 网关归一化后，使用 DeepSeek 网页
 | 模型 ID | 上游通道 | 默认思考 | 搜索 |
 | --- | --- | --- | --- |
 | `deepseek-flash` | `default` | 开启，可通过 `thinking: false` 关闭 | 关闭 |
+| `deepseek-flash-search` | `default` | 开启，可通过 `thinking: false` 关闭 | 开启 |
 
-旧的 `deepseek-v4-*`、模型别名和 `-nothinking` 模型 ID 已移除，使用旧名称的客户端需要改为 `deepseek-flash`。
+两个名称使用同一个上游模型；联网模式向上游发送 `search_enabled: true`。Chat Completions 和 Responses 请求也可以用布尔参数 `search_enabled` 覆盖各自的默认值。旧的 `deepseek-v4-*`、其他模型别名和 `-nothinking` 模型 ID 已移除。
+
+非流式响应会尝试将上游引用转换为来源链接；流式响应目前会隐藏引用标记，不返回对应来源链接。
 
 ## 快速开始
 

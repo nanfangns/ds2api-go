@@ -78,8 +78,11 @@ Clients using the OpenAI-compatible protocol can connect by selecting the suppor
 | Model ID | Upstream channel | Thinking | Search |
 | --- | --- | --- | --- |
 | `deepseek-flash` | `default` | Enabled by default; use `thinking: false` to disable | Disabled |
+| `deepseek-flash-search` | `default` | Enabled by default; use `thinking: false` to disable | Enabled |
 
-The old `deepseek-v4-*`, model aliases and `-nothinking` IDs have been removed. Update existing clients to use `deepseek-flash`.
+Both IDs use the same upstream model; the search mode sends `search_enabled: true` upstream. Chat Completions and Responses requests can override either default with a boolean `search_enabled` parameter. Old `deepseek-v4-*`, other aliases and `-nothinking` IDs have been removed.
+
+Non-streaming responses attempt to convert upstream citations into source links; streaming responses currently hide citation markers without returning those links.
 
 ## Quick Start
 

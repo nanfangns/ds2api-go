@@ -163,7 +163,7 @@ OpenAI `/v1/*` 仍是规范路径。对于只配置 DS2API 根地址的客户端
 
 ### `GET /v1/models`
 
-无需鉴权。当前仅返回 `deepseek-flash`。请求同样只接受该模型 ID；旧模型、别名和 `-nothinking` 后缀不再支持。默认启用思考，可在请求中设置 `"thinking": false` 关闭。
+无需鉴权。返回 `deepseek-flash` 和 `deepseek-flash-search`：两者使用同一个上游模型，后者默认开启联网搜索。旧模型、其他别名和 `-nothinking` 后缀不再支持。默认启用思考，可在请求中设置 `"thinking": false` 关闭。
 
 ### `POST /v1/chat/completions`
 
@@ -180,9 +180,10 @@ Content-Type: application/json
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 使用 `deepseek-flash` |
+| `model` | string | ✅ | `deepseek-flash` 或 `deepseek-flash-search` |
 | `messages` | array | ✅ | OpenAI 风格消息数组 |
 | `stream` | boolean | ❌ | 默认 `false` |
+| `search_enabled` | boolean | ❌ | 覆盖模型的联网搜索默认值；也可放在 `extra_body` 中 |
 | `tools` | array | ❌ | Function Calling 定义 |
 | `temperature` 等 | any | ❌ | 兼容透传字段（最终效果由上游决定） |
 
@@ -285,7 +286,7 @@ data: [DONE]
 
 ### `GET /v1/models/{id}`
 
-无需鉴权。入参支持 alias（例如 `gpt-4o`），返回的是映射后的 DeepSeek 模型对象。
+无需鉴权。支持查询上述两个模型 ID。
 
 ### `POST /v1/responses`
 
@@ -293,11 +294,12 @@ OpenAI Responses 风格接口，兼容 `input` 或 `messages`。
 
 | 字段 | 类型 | 必填 | 说明 |
 | --- | --- | --- | --- |
-| `model` | string | ✅ | 使用 `deepseek-flash` |
+| `model` | string | ✅ | `deepseek-flash` 或 `deepseek-flash-search` |
 | `input` | string/array/object | ❌ | 与 `messages` 二选一 |
 | `messages` | array | ❌ | 与 `input` 二选一 |
 | `instructions` | string | ❌ | 自动前置为 system 消息 |
 | `stream` | boolean | ❌ | 默认 `false` |
+| `search_enabled` | boolean | ❌ | 覆盖模型的联网搜索默认值；也可放在 `extra_body` 中 |
 | `tools` | array | ❌ | 与 chat 同样的工具识别与转译策略（含代码块示例豁免） |
 | `tool_choice` | string/object | ❌ | 支持 `auto`/`none`/`required` 与强制函数（`{"type":"function","name":"..."}`） |
 

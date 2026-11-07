@@ -22,8 +22,21 @@ func TestWhaleModelScope(t *testing.T) {
 			t.Fatalf("retired model %q unexpectedly accepted", input)
 		}
 	}
+	for _, input := range []string{"deepseek-flash-search", " DeepSeek-Flash-Search "} {
+		got, ok := ResolveModel(nil, input)
+		thinking, search, valid := GetModelConfig(got)
+		modelType, typeOK := GetModelType(got)
+		if !ok || got != "deepseek-flash-search" || !valid || !thinking || !search || !typeOK || modelType != "default" {
+			t.Fatalf("unexpected search model configuration: %q %v %v %v %v %q %v", got, ok, thinking, search, valid, modelType, typeOK)
+		}
+	}
 	list := OpenAIModelsResponse()["data"].([]ModelInfo)
-	if len(list) != 1 || list[0].ID != "deepseek-flash" || !list[0].Multimodal || list[0].ContextLength != EffectiveUserFacingContextLimitTokens {
+	if len(list) != 2 || list[0].ID != "deepseek-flash" || list[1].ID != "deepseek-flash-search" {
 		t.Fatalf("unexpected models: %+v", list)
+	}
+	for _, model := range list {
+		if !model.Multimodal || model.ContextLength != EffectiveUserFacingContextLimitTokens {
+			t.Fatalf("unexpected model capabilities: %+v", model)
+		}
 	}
 }

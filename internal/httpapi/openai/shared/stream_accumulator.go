@@ -89,7 +89,9 @@ func (a *StreamAccumulator) applyTextPart(text string) StreamPartDelta {
 	}
 	a.RawText.WriteString(rawTrimmed)
 	delta := StreamPartDelta{Type: "text", RawText: rawTrimmed}
-	if a.SearchEnabled && sse.IsCitation(rawTrimmed) {
+	// A citation marker may share a chunk with real answer text. Only suppress
+	// the chunk when nothing remains after removing the marker.
+	if a.SearchEnabled && sse.IsCitation(rawTrimmed) && strings.TrimSpace(CleanVisibleOutput(rawTrimmed, true)) == "" {
 		delta.CitationOnly = true
 		return delta
 	}

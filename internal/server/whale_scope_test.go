@@ -28,7 +28,7 @@ func TestPublicSurfaceMatchesWhaleModelAndRoutes(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &payload); err != nil {
 		t.Fatal(err)
 	}
-	if len(payload.Data) != 1 || payload.Data[0].ID != "deepseek-flash" {
+	if len(payload.Data) != 2 || payload.Data[0].ID != "deepseek-flash" || payload.Data[1].ID != "deepseek-flash-search" {
 		t.Fatalf("unexpected model list: %+v", payload.Data)
 	}
 	for _, model := range []string{"deepseek-v4-flash", "deepseek-v4-pro", "deepseek-v4-vision", "deepseek-v4-flash-search", "deepseek-flash-nothinking"} {

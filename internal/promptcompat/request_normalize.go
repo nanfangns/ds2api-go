@@ -36,6 +36,7 @@ func NormalizeOpenAIChatRequest(store ConfigReader, req map[string]any, traceID 
 		return StandardRequest{}, fmt.Errorf("model %q is not available", model)
 	}
 	defaultThinkingEnabled, searchEnabled, _ := config.GetModelConfig(resolvedModel)
+	searchEnabled = resolveSearchEnabled(req, searchEnabled)
 	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
 	if config.IsNoThinkingModel(resolvedModel) {
 		thinkingEnabled = false
@@ -81,6 +82,7 @@ func NormalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 		return StandardRequest{}, fmt.Errorf("model %q is not available", model)
 	}
 	defaultThinkingEnabled, searchEnabled, _ := config.GetModelConfig(resolvedModel)
+	searchEnabled = resolveSearchEnabled(req, searchEnabled)
 	thinkingEnabled := util.ResolveThinkingEnabled(req, defaultThinkingEnabled)
 	if config.IsNoThinkingModel(resolvedModel) {
 		thinkingEnabled = false
@@ -120,6 +122,19 @@ func NormalizeOpenAIResponsesRequest(store ConfigReader, req map[string]any, tra
 		RefFileTokens:   estimateInlineFileTokens(req),
 		PassThrough:     passThrough,
 	}, nil
+}
+
+// Explicit booleans let clients override the model's search default.
+func resolveSearchEnabled(req map[string]any, fallback bool) bool {
+	if enabled, ok := req["search_enabled"].(bool); ok {
+		return enabled
+	}
+	if extra, ok := req["extra_body"].(map[string]any); ok {
+		if enabled, ok := extra["search_enabled"].(bool); ok {
+			return enabled
+		}
+	}
+	return fallback
 }
 
 func ensureToolDetectionEnabled(toolNames []string, toolsRaw any) []string {

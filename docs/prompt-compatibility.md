@@ -4,9 +4,11 @@
 
 ## 模型与请求
 
-模型列表只公开 `deepseek-flash`，上游使用 `default` 通道。默认启用思考，可通过请求中的 `thinking: false` 关闭。旧的 `deepseek-v4-*`、`-nothinking` 变体和模型别名不再解析。无效模型会在处理内嵌附件之前被拒绝。
+模型列表公开 `deepseek-flash` 和 `deepseek-flash-search`，两者使用同一个上游 `default` 通道，后者默认启用联网搜索。Chat 和 Responses 请求可用布尔值 `search_enabled` 覆盖模型默认值，顶层参数优先于 `extra_body` 中的参数。默认启用思考，可通过请求中的 `thinking: false` 关闭。旧的 `deepseek-v4-*`、`-nothinking` 变体和其他模型别名不再解析。无效模型会在处理内嵌附件之前被拒绝。
 
 请求首先归一化为 `StandardRequest`；上下文检查、文件处理、账号选择、工具调用、输出和用量统计由共享运行时执行。Chat 和 Responses 各自只负责转换输入与输出格式。
+
+联网搜索的非流式响应尝试把上游引用转换为来源链接。流式响应目前隐藏引用标记，不返回对应来源链接。
 
 ## 上下文文件
 

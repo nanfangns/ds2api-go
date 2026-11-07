@@ -96,6 +96,17 @@ func TestStreamAccumulatorSuppressesCitationTextWhenSearchEnabled(t *testing.T) 
 	}
 }
 
+func TestStreamAccumulatorKeepsTextFollowingCitation(t *testing.T) {
+	acc := StreamAccumulator{SearchEnabled: true, StripReferenceMarkers: true}
+	result := acc.Apply(sse.LineResult{
+		Parsed: true,
+		Parts:  []sse.ContentPart{{Type: "text", Text: "[citation:1] 正文内容"}},
+	})
+	if len(result.Parts) != 1 || result.Parts[0].VisibleText != " 正文内容" || result.Parts[0].CitationOnly {
+		t.Fatalf("lost text after citation: %#v", result.Parts)
+	}
+}
+
 func TestStreamAccumulatorStripsInlineCitationAndReferenceMarkers(t *testing.T) {
 	acc := StreamAccumulator{SearchEnabled: true, StripReferenceMarkers: true}
 	result := acc.Apply(sse.LineResult{

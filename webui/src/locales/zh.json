@@ -227,7 +227,7 @@
         "models": {
             "flash": "v4 Flash（默认开启思考）",
             "pro": "v4 Pro（默认开启思考）",
-            "flashSearch": "v4 Flash（带搜索）",
+            "flashSearch": "Flash（联网搜索）",
             "proSearch": "v4 Pro（带搜索）",
             "vision": "v4 Vision（默认开启思考）",
             "generic": "兼容模型",
